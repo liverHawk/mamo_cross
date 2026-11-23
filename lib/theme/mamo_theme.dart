@@ -20,6 +20,13 @@ abstract final class MamoColors {
   static const tableHeaderBg = Color(0xFFF8FAFC);
   static const dangerRed = Color(0xFFE13D35);
   static const badgeRed = Color(0xFFE34545);
+  static const pageSubtitle = Color(0xFF6C7480);
+  static const liveBadgeBorder = Color(0xFFD8DDE5);
+  static const miniDivider = Color(0xFFEDF0F3);
+  static const itemBorder = Color(0xFFE8EBEF);
+  static const detailHeaderBorder = Color(0xFFE6E9ED);
+  static const toolbarText = Color(0xFF596574);
+  static const partnerText = Color(0xFF6D7681);
 }
 
 /// MAMO アプリの共通テーマと装飾
