@@ -83,6 +83,81 @@ class RescueRequest {
   final RequestStatus status;
   final String? dbId;
 
+  /// `public.rescue_requests` の行レコードから `RescueRequest` を生成（mamo-main/script.js 準拠）
+  factory RescueRequest.fromSupabaseRow(Map<String, dynamic> row) {
+    final rawDbId = row['id']?.toString().trim();
+    final dbId = (rawDbId != null && rawDbId.isNotEmpty) ? rawDbId : null;
+    final requestId = _firstNonEmpty([row['request_id']], '');
+    final id = requestId.isNotEmpty ? requestId : 'DB-${dbId ?? ''}';
+
+    return RescueRequest(
+      id: id,
+      dbId: dbId,
+      time: _formatRowTime(row['created_at']),
+      name: _firstNonEmpty([row['requester_name'], row['user_name']], '不明'),
+      age: int.tryParse('${row['age'] ?? ''}') ?? 0,
+      gender: _firstNonEmpty([row['gender']], ''),
+      agency: parseAgency(row['request_type']),
+      location: _firstNonEmpty([row['location_text'], row['location']], '位置情報'),
+      distance: _firstNonEmpty([row['distance_text'], row['distance']], ''),
+      content: _firstNonEmpty([row['rescue_details'], row['detail']], '救助要請'),
+      consideration: _firstNonEmpty(
+        [row['considerations'], row['health_condition'], row['consideration']],
+        'なし',
+      ),
+      latPercent: 50.0,
+      topPercent: 50.0,
+      status: parseStatus(row['status']),
+    );
+  }
+
+  /// DB `request_type` 文字列から `AgencyType` へ変換
+  static AgencyType parseAgency(Object? value) {
+    final text = value?.toString() ?? '';
+    if (text.contains('消防')) return AgencyType.fire;
+    if (text.contains('警察')) return AgencyType.police;
+    if (text.contains('自衛隊')) return AgencyType.sdf;
+    return AgencyType.emergency;
+  }
+
+  /// DB `status` 文字列から `RequestStatus` へ変換
+  static RequestStatus parseStatus(Object? value) {
+    final text = value?.toString().trim() ?? '';
+    return switch (text) {
+      '対応中' => RequestStatus.working,
+      '対応済み' => RequestStatus.done,
+      _ => RequestStatus.pending,
+    };
+  }
+
+  static String _firstNonEmpty(List<Object?> candidates, String fallback) {
+    for (final candidate in candidates) {
+      if (candidate == null) continue;
+      final text = candidate.toString().trim();
+      if (text.isNotEmpty) {
+        return text;
+      }
+    }
+    return fallback;
+  }
+
+  static String _formatRowTime(Object? rawCreatedAt) {
+    DateTime? parsed;
+    if (rawCreatedAt is DateTime) {
+      parsed = rawCreatedAt.toLocal();
+    } else if (rawCreatedAt != null) {
+      final str = rawCreatedAt.toString().trim();
+      if (str.isNotEmpty) {
+        parsed = DateTime.tryParse(str)?.toLocal();
+      }
+    }
+    final dt = parsed ?? DateTime.now();
+    final h = dt.hour.toString().padLeft(2, '0');
+    final m = dt.minute.toString().padLeft(2, '0');
+    final s = dt.second.toString().padLeft(2, '0');
+    return '$h:$m:$s';
+  }
+
   /// `mamo` 準拠のマップピン色
   Color get pinColor {
     if (status == RequestStatus.done) {
