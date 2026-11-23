@@ -70,7 +70,8 @@ class RequestsView extends StatelessWidget {
               _RequestsToolbar(store: store),
             ];
 
-            if (outerConstraints.hasBoundedHeight) {
+            if (outerConstraints.hasBoundedHeight &&
+                outerConstraints.maxHeight >= 380) {
               return Padding(
                 padding: padding,
                 child: Column(
@@ -174,68 +175,109 @@ class RequestsView extends StatelessWidget {
       context: context,
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
-      builder: (_) {
-        return FractionallySizedBox(
-          heightFactor: 0.88,
-          child: ClipRRect(
-            borderRadius: const BorderRadius.vertical(top: Radius.circular(16)),
-            child: ScaffoldMessenger(
-              child: Scaffold(
-                backgroundColor: Colors.white,
-                body: SafeArea(
-                  top: false,
-                  child: ListenableBuilder(
-                    listenable: store,
-                    builder: (innerContext, _) {
-                      return Column(
-                        children: [
-                          Padding(
-                            padding: const EdgeInsets.fromLTRB(12, 8, 8, 4),
-                            child: Row(
-                              children: [
-                                const SizedBox(width: 40),
-                                Expanded(
-                                  child: Center(
-                                    child: Container(
-                                      width: 36,
-                                      height: 4,
-                                      decoration: BoxDecoration(
-                                        color: MamoColors.controlBorder,
-                                        borderRadius: BorderRadius.circular(2),
-                                      ),
-                                    ),
+      builder: (_) => _MobileRequestDetailSheet(store: store),
+    );
+  }
+}
+
+class _MobileRequestDetailSheet extends StatefulWidget {
+  const _MobileRequestDetailSheet({required this.store});
+
+  final RescueStore store;
+
+  @override
+  State<_MobileRequestDetailSheet> createState() =>
+      _MobileRequestDetailSheetState();
+}
+
+class _MobileRequestDetailSheetState extends State<_MobileRequestDetailSheet> {
+  final GlobalKey<ScaffoldMessengerState> _messengerKey =
+      GlobalKey<ScaffoldMessengerState>();
+  bool _snackBarVisible = false;
+  int _snackBarSeq = 0;
+
+  void _showSnackBar(String message) {
+    final messenger = _messengerKey.currentState;
+    if (messenger == null) return;
+    final seq = ++_snackBarSeq;
+    if (!_snackBarVisible) {
+      setState(() {
+        _snackBarVisible = true;
+      });
+    }
+    messenger.hideCurrentSnackBar();
+    final controller = messenger.showSnackBar(
+      SnackBar(content: Text(message)),
+    );
+    controller.closed.then((_) {
+      if (!mounted || seq != _snackBarSeq) return;
+      setState(() {
+        _snackBarVisible = false;
+      });
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return FractionallySizedBox(
+      heightFactor: 0.88,
+      child: ClipRRect(
+        borderRadius: const BorderRadius.vertical(top: Radius.circular(16)),
+        child: ScaffoldMessenger(
+          key: _messengerKey,
+          child: Scaffold(
+            backgroundColor: Colors.white,
+            body: SafeArea(
+              top: false,
+              child: ListenableBuilder(
+                listenable: widget.store,
+                builder: (innerContext, _) {
+                  return Column(
+                    children: [
+                      Padding(
+                        padding: const EdgeInsets.fromLTRB(12, 8, 8, 4),
+                        child: Row(
+                          children: [
+                            const SizedBox(width: 40),
+                            Expanded(
+                              child: Center(
+                                child: Container(
+                                  width: 36,
+                                  height: 4,
+                                  decoration: BoxDecoration(
+                                    color: MamoColors.controlBorder,
+                                    borderRadius: BorderRadius.circular(2),
                                   ),
                                 ),
-                                IconButton(
-                                  icon: const Icon(Icons.close),
-                                  tooltip: '閉じる',
-                                  onPressed: () =>
-                                      Navigator.of(innerContext).pop(),
-                                ),
-                              ],
-                            ),
-                          ),
-                          Expanded(
-                            child: SingleChildScrollView(
-                              padding: const EdgeInsets.fromLTRB(
-                                18,
-                                4,
-                                18,
-                                24,
                               ),
-                              child: _RequestDetailContent(store: store),
                             ),
+                            IconButton(
+                              icon: const Icon(Icons.close),
+                              tooltip: '閉じる',
+                              onPressed: () =>
+                                  Navigator.of(innerContext).pop(),
+                            ),
+                          ],
+                        ),
+                      ),
+                      Expanded(
+                        child: SingleChildScrollView(
+                          padding: const EdgeInsets.fromLTRB(18, 4, 18, 48),
+                          child: _RequestDetailContent(
+                            store: widget.store,
+                            onShowSnackBar: _showSnackBar,
                           ),
-                        ],
-                      );
-                    },
-                  ),
-                ),
+                        ),
+                      ),
+                      SizedBox(height: _snackBarVisible ? 80 : 0),
+                    ],
+                  );
+                },
               ),
             ),
           ),
-        );
-      },
+        ),
+      ),
     );
   }
 }
@@ -541,9 +583,13 @@ class _RequestDetailPanel extends StatelessWidget {
 }
 
 class _RequestDetailContent extends StatelessWidget {
-  const _RequestDetailContent({required this.store});
+  const _RequestDetailContent({
+    required this.store,
+    this.onShowSnackBar,
+  });
 
   final RescueStore store;
+  final ValueChanged<String>? onShowSnackBar;
 
   @override
   Widget build(BuildContext context) {
@@ -908,6 +954,10 @@ class _RequestDetailContent extends StatelessWidget {
   }
 
   void _showSnackBar(BuildContext context, String message) {
+    if (onShowSnackBar != null) {
+      onShowSnackBar!(message);
+      return;
+    }
     ScaffoldMessenger.maybeOf(context)
       ?..hideCurrentSnackBar()
       ..showSnackBar(SnackBar(content: Text(message)));
