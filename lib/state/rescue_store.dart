@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:material_ui/material_ui.dart';
 
 import '../models/rescue_request.dart';
+import '../services/rescue_data_source.dart';
 
 /// 初期デモデータ（mamo/app/composables/useRescueData.ts と同一）
 const List<RescueRequest> _initialRequests = [
@@ -85,8 +86,11 @@ const List<RescueRequest> _initialRequests = [
 
 /// MAMO アプリ全体の状態管理ストア
 class RescueStore extends ChangeNotifier {
-  RescueStore({bool startClock = true})
-      : _requests = List<RescueRequest>.of(_initialRequests) {
+  RescueStore({
+    bool startClock = true,
+    this.dataSource,
+    bool autoInitialize = true,
+  }) : _requests = List<RescueRequest>.of(_initialRequests) {
     _updateClockValue();
     if (startClock) {
       _clockTimer = Timer.periodic(const Duration(seconds: 1), (_) {
@@ -94,8 +98,12 @@ class RescueStore extends ChangeNotifier {
         notifyListeners();
       });
     }
+    if (dataSource != null && autoInitialize) {
+      unawaited(initializeRealtime());
+    }
   }
 
+  final RescueDataSource? dataSource;
   MamoView _currentView = MamoView.dashboard;
   AgencyType? _currentAgencyFilter;
   RequestStatus? _statusFilter;
@@ -104,7 +112,16 @@ class RescueStore extends ChangeNotifier {
   String _municipalityName = '○○市 災害対策本部';
   bool _realtimeNotification = true;
   String _currentTime = '';
+  bool _isRealtimeConnected = false;
+  bool _disposed = false;
   Timer? _clockTimer;
+  Future<void>? _initFuture;
+  StreamSubscription<RescueRealtimeEvent>? _realtimeSubscription;
+  final StreamController<RescueRequest> _incomingAlertController =
+      StreamController<RescueRequest>.broadcast();
+
+  static RescueRequest dbRowToRequest(Map<String, dynamic> row) =>
+      RescueRequest.fromSupabaseRow(row);
 
   MamoView get currentView => _currentView;
   AgencyType? get currentAgencyFilter => _currentAgencyFilter;
@@ -114,6 +131,8 @@ class RescueStore extends ChangeNotifier {
   String get municipalityName => _municipalityName;
   bool get realtimeNotification => _realtimeNotification;
   String get currentTime => _currentTime;
+  bool get isRealtimeConnected => _isRealtimeConnected;
+  Stream<RescueRequest> get incomingAlerts => _incomingAlertController.stream;
 
   int get newCount =>
       _requests.where((r) => r.status == RequestStatus.pending).length;
@@ -171,11 +190,163 @@ class RescueStore extends ChangeNotifier {
     notifyListeners();
   }
 
-  void changeStatus(String id, RequestStatus newStatus) {
+  Future<void> initializeRealtime() {
+    if (_disposed || dataSource == null) {
+      return Future.value();
+    }
+    return _initFuture ??= _performInitializeRealtime();
+  }
+
+  Future<void> _performInitializeRealtime() async {
+    final ds = dataSource;
+    if (_disposed || ds == null) return;
+
+    try {
+      final rows = await ds.fetchInitialRequests(limit: 50);
+      if (_disposed) return;
+      for (final row in rows.reversed) {
+        addDbRequest(row, notifyAlert: false);
+      }
+    } catch (e) {
+      debugPrint('MAMO DB取得エラー: $e');
+    }
+
+    if (_disposed) return;
+
+    try {
+      await _realtimeSubscription?.cancel();
+      if (_disposed) return;
+      _realtimeSubscription = ds
+          .subscribeRequests(
+            onConnectionChanged: (connected) {
+              if (_disposed) return;
+              if (_isRealtimeConnected != connected) {
+                _isRealtimeConnected = connected;
+                notifyListeners();
+              }
+            },
+          )
+          .listen(
+            (event) {
+              if (_disposed) return;
+              switch (event) {
+                case RescueInsertedEvent(:final row):
+                  addDbRequest(row, notifyAlert: true);
+                case RescueUpdatedEvent(:final row):
+                  applyRemoteUpdate(row);
+              }
+            },
+            onError: (Object error, StackTrace stackTrace) {
+              debugPrint('MAMO Realtimeエラー: $error');
+              if (_disposed) return;
+              if (_isRealtimeConnected) {
+                _isRealtimeConnected = false;
+                notifyListeners();
+              }
+            },
+          );
+    } catch (e) {
+      debugPrint('MAMO Realtime購読エラー: $e');
+      if (!_disposed && _isRealtimeConnected) {
+        _isRealtimeConnected = false;
+        notifyListeners();
+      }
+    }
+  }
+
+  bool addDbRequest(Map<String, dynamic> row, {bool notifyAlert = false}) {
+    if (_disposed) return false;
+    final req = dbRowToRequest(row);
+    if (req.dbId != null &&
+        _requests.any((v) => v.dbId != null && v.dbId == req.dbId)) {
+      return false;
+    }
+    _requests.insert(0, req);
+    _selectedId = req.id;
+    notifyListeners();
+    if (notifyAlert &&
+        _realtimeNotification &&
+        !_incomingAlertController.isClosed) {
+      _incomingAlertController.add(req);
+    }
+    return true;
+  }
+
+  void applyRemoteUpdate(Map<String, dynamic> row) {
+    if (_disposed) return;
+    final rawDbId = row['id']?.toString().trim();
+    if (rawDbId == null || rawDbId.isEmpty) return;
+    final index =
+        _requests.indexWhere((v) => v.dbId != null && v.dbId == rawDbId);
+    if (index == -1) return;
+
+    final existing = _requests[index];
+    final nextStatus = row['status'] != null
+        ? RescueRequest.parseStatus(row['status'])
+        : existing.status;
+    final nextName = _pickUpdatedText(
+      [row['requester_name'], row['user_name']],
+      existing.name,
+    );
+    final rawRequestType = row['request_type']?.toString().trim();
+    final nextAgency = (rawRequestType != null && rawRequestType.isNotEmpty)
+        ? RescueRequest.parseAgency(rawRequestType)
+        : existing.agency;
+    final nextLocation = _pickUpdatedText(
+      [row['location_text'], row['location']],
+      existing.location,
+    );
+    final nextDistance = _pickUpdatedText(
+      [row['distance_text'], row['distance']],
+      existing.distance,
+    );
+    final nextContent = _pickUpdatedText(
+      [row['rescue_details'], row['detail']],
+      existing.content,
+    );
+    final nextConsideration = _pickUpdatedText(
+      [row['considerations'], row['health_condition'], row['consideration']],
+      existing.consideration,
+    );
+
+    _requests[index] = existing.copyWith(
+      status: nextStatus,
+      name: nextName,
+      agency: nextAgency,
+      location: nextLocation,
+      distance: nextDistance,
+      content: nextContent,
+      consideration: nextConsideration,
+    );
+    notifyListeners();
+  }
+
+  static String _pickUpdatedText(List<Object?> candidates, String fallback) {
+    for (final candidate in candidates) {
+      if (candidate == null) continue;
+      final text = candidate.toString().trim();
+      if (text.isNotEmpty) return text;
+    }
+    return fallback;
+  }
+
+  Future<void> changeStatus(String id, RequestStatus newStatus) async {
     final index = _requests.indexWhere((r) => r.id == id);
     if (index == -1) return;
-    _requests[index] = _requests[index].copyWith(status: newStatus);
+    final target = _requests[index];
+    _requests[index] = target.copyWith(status: newStatus);
+    _selectedId = id;
     notifyListeners();
+
+    final dbId = target.dbId;
+    final ds = dataSource;
+    if (dbId != null && ds != null) {
+      try {
+        await ds.updateStatus(dbId: dbId, status: newStatus);
+      } catch (e) {
+        debugPrint('ステータス更新エラー: $e');
+      }
+    }
   }
 
   void filterAgency(AgencyType agency) {
@@ -207,7 +378,14 @@ class RescueStore extends ChangeNotifier {
 
   @override
   void dispose() {
+    _disposed = true;
     _clockTimer?.cancel();
+    unawaited(_realtimeSubscription?.cancel());
+    unawaited(_incomingAlertController.close());
+    final ds = dataSource;
+    if (ds != null) {
+      unawaited(ds.dispose());
+    }
     super.dispose();
   }
 }
