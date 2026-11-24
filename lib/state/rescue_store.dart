@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:material_ui/material_ui.dart';
 
+import '../models/citizen_models.dart';
 import '../models/rescue_request.dart';
 import '../services/rescue_data_source.dart';
 
@@ -185,6 +186,19 @@ class RescueStore extends ChangeNotifier {
       return false;
     }
 
+    final rawRequestId = row['request_id']?.toString().trim() ?? '';
+    if (req.dbId != null && rawRequestId.isNotEmpty) {
+      final localIndex = _requests.indexWhere(
+        (v) => v.dbId == null && v.id == req.id,
+      );
+      if (localIndex != -1) {
+        _requests[localIndex] =
+            _requests[localIndex].copyWith(dbId: req.dbId);
+        notifyListeners();
+        return false;
+      }
+    }
+
     var nextReq = req;
     if (req.dbId != null && _requests.any((v) => v.id == nextReq.id)) {
       nextReq = nextReq.copyWith(id: '${nextReq.id}#${req.dbId}');
@@ -322,5 +336,116 @@ class RescueStore extends ChangeNotifier {
     unawaited(_realtimeSubscription?.cancel());
     unawaited(_incomingAlertController.close());
     super.dispose();
+  }
+
+  /// 利用者（住民・スマホ）側から送信された救助要請を即時ローカル反映し、
+  /// 設定済み・オンライン時は Supabase (`public.rescue_requests`) へ登録する。
+  Future<RescueRequest> submitCitizenRequest({
+    required String requesterName,
+    required String rescueDetails,
+    required String considerations,
+    String locationText = '〇〇地区付近',
+    String distanceText = '約150m先（デモ）',
+  }) async {
+    final now = DateTime.now();
+    final normalizedName =
+        requesterName.trim().isEmpty ? 'あなた' : requesterName.trim();
+    final normalizedDetails =
+        rescueDetails.trim().isEmpty ? '救助が必要です' : rescueDetails.trim();
+    final normalizedConsiderations =
+        considerations.trim().isEmpty ? 'なし' : considerations.trim();
+    final normalizedLocation =
+        locationText.trim().isEmpty ? '〇〇地区付近' : locationText.trim();
+    final normalizedDistance =
+        distanceText.trim().isEmpty ? '約150m先（デモ）' : distanceText.trim();
+
+    final requestId = _nextCitizenRequestId(now);
+    final localRequest = RescueRequest(
+      id: requestId,
+      time: _formatClockTime(now),
+      name: normalizedName,
+      age: 0,
+      gender: '',
+      agency: AgencyType.emergency,
+      location: normalizedLocation,
+      distance: normalizedDistance,
+      content: normalizedDetails,
+      consideration: normalizedConsiderations,
+      latPercent: 50.0,
+      topPercent: 50.0,
+      status: RequestStatus.pending,
+    );
+
+    if (_disposed) return localRequest;
+
+    _requests.insert(0, localRequest);
+    _selectedId = localRequest.id;
+    notifyListeners();
+
+    final ds = dataSource;
+    if (ds == null) {
+      return localRequest;
+    }
+
+    final payload = buildCitizenRescuePayload(
+      requestId: requestId,
+      createdAt: now,
+      requesterName: normalizedName,
+      rescueDetails: normalizedDetails,
+      considerations: normalizedConsiderations,
+      locationText: normalizedLocation,
+      distanceText: normalizedDistance,
+      requestType: '救助要請',
+      status: RequestStatus.pending.label,
+    );
+
+    Map<String, dynamic>? insertedRow;
+    try {
+      insertedRow = await ds.insertRequest(payload);
+    } catch (e) {
+      debugPrint('MAMO市民救助要請送信エラー: $e');
+    }
+
+    if (_disposed || insertedRow == null) {
+      return localRequest;
+    }
+
+    final rawDbId = insertedRow['id']?.toString().trim();
+    final insertedDbId =
+        (rawDbId != null && rawDbId.isNotEmpty) ? rawDbId : null;
+    if (insertedDbId == null) {
+      return localRequest;
+    }
+
+    final index = _requests.indexWhere(
+      (v) => v.id == requestId || v.dbId == insertedDbId,
+    );
+    if (index == -1) {
+      return localRequest;
+    }
+
+    final current = _requests[index];
+    if (current.dbId == null) {
+      final reconciled = current.copyWith(dbId: insertedDbId);
+      _requests[index] = reconciled;
+      notifyListeners();
+      return reconciled;
+    }
+    return current;
+  }
+
+  String _nextCitizenRequestId(DateTime now) {
+    var ms = now.millisecondsSinceEpoch;
+    while (_requests.any((r) => r.id == 'MAMO-$ms')) {
+      ms++;
+    }
+    return 'MAMO-$ms';
+  }
+
+  static String _formatClockTime(DateTime dt) {
+    final h = dt.hour.toString().padLeft(2, '0');
+    final m = dt.minute.toString().padLeft(2, '0');
+    final s = dt.second.toString().padLeft(2, '0');
+    return '$h:$m:$s';
   }
 }
