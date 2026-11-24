@@ -12,11 +12,14 @@ import 'package:supabase/supabase.dart';
 
 class _FakeRescueDataSource implements RescueDataSource {
   Completer<Map<String, dynamic>?>? insertCompleter;
+  Future<Map<String, dynamic>?> Function(Map<String, dynamic> payload)?
+      onInsert;
   final List<Map<String, dynamic>> insertedPayloads = <Map<String, dynamic>>[];
   final List<({String dbId, RequestStatus status})> statusUpdates =
       <({String dbId, RequestStatus status})>[];
   Map<String, dynamic>? nextInsertResult;
   Object? insertError;
+  Object? updateStatusError;
   bool disposed = false;
 
   final StreamController<RescueRealtimeEvent> realtimeController =
@@ -46,6 +49,9 @@ class _FakeRescueDataSource implements RescueDataSource {
     required RequestStatus status,
   }) async {
     statusUpdates.add((dbId: dbId, status: status));
+    if (updateStatusError != null) {
+      throw updateStatusError!;
+    }
   }
 
   @override
@@ -55,6 +61,9 @@ class _FakeRescueDataSource implements RescueDataSource {
     insertedPayloads.add(Map<String, dynamic>.from(payload));
     if (insertError != null) {
       throw insertError!;
+    }
+    if (onInsert != null) {
+      return onInsert!(payload);
     }
     if (insertCompleter != null) {
       return insertCompleter!.future;
@@ -733,6 +742,265 @@ void main() {
 
       await ds.dispose();
       expect(await ds.insertRequest(payload), isNull);
+    });
+
+    test('returns null cleanly when SupabaseConfig has an invalid URL',
+        () async {
+      final invalidUrlDs = SupabaseRescueDataSource(
+        config: const SupabaseConfig(
+          url: 'http://[::1',
+          publishableKey: 'invalid-key',
+        ),
+      );
+      addTearDown(invalidUrlDs.dispose);
+
+      final payload = buildCitizenRescuePayload(
+        requestId: 'MAMO-BAD-URL',
+        createdAt: DateTime.utc(2026, 11, 24, 6, 10, 0),
+        requesterName: '山口 花子',
+        rescueDetails: '接続テスト',
+        considerations: 'なし',
+      );
+
+      expect(await invalidUrlDs.insertRequest(payload), isNull);
+    });
+  });
+
+  group('Iteration 2 regression guards', () {
+    test(
+        'syncs in-flight changeStatus to DB when insertRequest resolves first',
+        () async {
+      final completer = Completer<Map<String, dynamic>?>();
+      final fakeDs = _FakeRescueDataSource()..insertCompleter = completer;
+      final store = RescueStore(startClock: false, dataSource: fakeDs);
+      addTearDown(store.dispose);
+
+      await store.initializeRealtime();
+
+      final submitFuture = store.submitCitizenRequest(
+        requesterName: '田中',
+        rescueDetails: '救助要請',
+        considerations: 'なし',
+      );
+
+      final localId = store.requests.single.id;
+      expect(store.requests.single.dbId, isNull);
+
+      // Operator changes status before insertRequest finishes
+      await store.changeStatus(localId, RequestStatus.working);
+      expect(store.requests.single.status, RequestStatus.working);
+      expect(fakeDs.statusUpdates, isEmpty);
+
+      // insertRequest resolves with remote status '未対応'
+      completer.complete(<String, dynamic>{
+        'id': 777,
+        'request_id': localId,
+        'status': '未対応',
+      });
+      final resolved = await submitFuture;
+
+      expect(resolved.dbId, '777');
+      expect(resolved.status, RequestStatus.working);
+      expect(store.requests.single.status, RequestStatus.working);
+      expect(fakeDs.statusUpdates.length, 1);
+      expect(fakeDs.statusUpdates.single.dbId, '777');
+      expect(fakeDs.statusUpdates.single.status, RequestStatus.working);
+    });
+
+    test(
+        'handles updateStatus failure gracefully during pre-dbId status sync',
+        () async {
+      final completer = Completer<Map<String, dynamic>?>();
+      final fakeDs = _FakeRescueDataSource()
+        ..insertCompleter = completer
+        ..updateStatusError = StateError('patch failed');
+      final store = RescueStore(startClock: false, dataSource: fakeDs);
+      addTearDown(store.dispose);
+
+      await store.initializeRealtime();
+
+      final submitFuture = store.submitCitizenRequest(
+        requesterName: '高橋',
+        rescueDetails: '救助要請',
+        considerations: 'なし',
+      );
+      final localId = store.requests.single.id;
+      await store.changeStatus(localId, RequestStatus.done);
+
+      completer.complete(<String, dynamic>{
+        'id': 888,
+        'request_id': localId,
+        'status': '未対応',
+      });
+      final resolved = await submitFuture;
+
+      expect(resolved.dbId, '888');
+      expect(resolved.status, RequestStatus.done);
+      expect(fakeDs.statusUpdates.length, 1);
+    });
+
+    test(
+        'preserves local status and syncs to DB on Realtime-first promotion',
+        () async {
+      final completer = Completer<Map<String, dynamic>?>();
+      final fakeDs = _FakeRescueDataSource()..insertCompleter = completer;
+      final store = RescueStore(startClock: false, dataSource: fakeDs);
+      addTearDown(store.dispose);
+
+      await store.initializeRealtime();
+
+      final submitFuture = store.submitCitizenRequest(
+        requesterName: '鈴木',
+        rescueDetails: '救助要請',
+        considerations: 'なし',
+      );
+      final localId = store.requests.single.id;
+
+      await store.changeStatus(localId, RequestStatus.working);
+      expect(fakeDs.statusUpdates, isEmpty);
+
+      // Realtime INSERT arrives BEFORE HTTP insertRequest resolves
+      fakeDs.realtimeController.add(
+        RescueInsertedEvent(<String, dynamic>{
+          'id': 303,
+          'request_id': localId,
+          'requester_name': '鈴木',
+          'rescue_details': '救助要請',
+          'status': '未対応',
+        }),
+      );
+      await Future<void>.delayed(Duration.zero);
+
+      expect(store.requests.length, 1);
+      expect(store.requests.single.dbId, '303');
+      expect(store.requests.single.status, RequestStatus.working);
+      expect(fakeDs.statusUpdates.length, 1);
+      expect(fakeDs.statusUpdates.single.dbId, '303');
+      expect(fakeDs.statusUpdates.single.status, RequestStatus.working);
+
+      // HTTP insertRequest resolves afterwards: must not duplicate updateStatus
+      completer.complete(<String, dynamic>{
+        'id': 303,
+        'request_id': localId,
+        'status': '未対応',
+      });
+      final resolved = await submitFuture;
+
+      expect(resolved.dbId, '303');
+      expect(resolved.status, RequestStatus.working);
+      expect(fakeDs.statusUpdates.length, 1);
+    });
+
+    test(
+        'deduplicates addDbRequest when id is null and request_id matches existing',
+        () async {
+      final store = RescueStore(startClock: false);
+      addTearDown(store.dispose);
+
+      final alerts = <RescueRequest>[];
+      final sub = store.incomingAlerts.listen(alerts.add);
+      addTearDown(sub.cancel);
+
+      final created = await store.submitCitizenRequest(
+        requesterName: '佐々木',
+        rescueDetails: '救助要請',
+        considerations: 'なし',
+      );
+
+      final added = store.addDbRequest(
+        <String, dynamic>{
+          'id': null,
+          'request_id': created.id,
+          'requester_name': '佐々木',
+          'rescue_details': '救助要請',
+          'status': '未対応',
+        },
+        notifyAlert: true,
+      );
+
+      expect(added, isFalse);
+      expect(store.requests.length, 1);
+      expect(store.requests.single.id, created.id);
+      await Future<void>.delayed(Duration.zero);
+      expect(alerts, isEmpty);
+    });
+
+    test(
+        'CitizenStore.submitRescue preserves newest summary on out-of-order completion and disposed RescueStore',
+        () async {
+      final completers = <Completer<Map<String, dynamic>?>>[];
+      final fakeDs = _FakeRescueDataSource()
+        ..onInsert = (_) {
+          final c = Completer<Map<String, dynamic>?>();
+          completers.add(c);
+          return c.future;
+        };
+      final rescueStore = RescueStore(startClock: false, dataSource: fakeDs);
+      final citizenStore = CitizenStore();
+      addTearDown(rescueStore.dispose);
+      addTearDown(citizenStore.dispose);
+
+      final future1 = citizenStore.submitRescue(
+        rescueStore,
+        name: '本人A',
+        detail: '1回目',
+      );
+      final id1 = citizenStore.latestRescueSummary!.requestId;
+
+      final future2 = citizenStore.submitRescue(
+        rescueStore,
+        name: '本人B',
+        detail: '2回目',
+      );
+      final id2 = citizenStore.latestRescueSummary!.requestId;
+      expect(id2, isNot(id1));
+
+      // Complete 2nd request first
+      completers[1].complete(<String, dynamic>{
+        'id': 202,
+        'request_id': id2,
+        'status': '未対応',
+      });
+      final sub2 = await future2;
+      expect(sub2.dbId, '202');
+      expect(citizenStore.latestRescueSummary!.requestId, id2);
+      expect(citizenStore.latestRescueSummary!.syncedToRemote, isTrue);
+
+      // Complete 1st request afterwards: must NOT overwrite latestRescueSummary
+      completers[0].complete(<String, dynamic>{
+        'id': 101,
+        'request_id': id1,
+        'status': '未対応',
+      });
+      final sub1 = await future1;
+      expect(sub1.dbId, '101');
+      expect(citizenStore.latestRescueSummary!.requestId, id2);
+      expect(citizenStore.latestRescueSummary!.requesterName, '本人B');
+      expect(citizenStore.latestRescueSummary!.detail, '2回目');
+
+      // Disposed RescueStore with existing head must not leak existing entry into summary
+      final disposedStore = RescueStore(startClock: false);
+      disposedStore.addDbRequest(<String, dynamic>{
+        'id': 55,
+        'request_id': 'MAMO-EXISTING',
+        'requester_name': '他人X',
+        'rescue_details': '既存要請',
+        'status': '未対応',
+      });
+      disposedStore.dispose();
+
+      final citizenStore2 = CitizenStore();
+      addTearDown(citizenStore2.dispose);
+      final subDisposed = await citizenStore2.submitRescue(
+        disposedStore,
+        name: '本人C',
+        detail: '破棄済みテスト',
+      );
+      expect(subDisposed.name, '本人C');
+      expect(citizenStore2.latestRescueSummary!.requestId,
+          isNot('MAMO-EXISTING'));
+      expect(citizenStore2.latestRescueSummary!.requesterName, '本人C');
+      expect(citizenStore2.latestRescueSummary!.detail, '破棄済みテスト');
     });
   });
 }
