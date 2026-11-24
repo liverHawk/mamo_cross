@@ -40,7 +40,6 @@ class SupabaseRescueDataSource implements RescueDataSource {
       postgrestOptions: const PostgrestClientOptions(retryEnabled: false),
       realtimeClientOptions: const RealtimeClientOptions(
         connectionCloseTimeout: Duration.zero,
-        disconnectOnEmptyChannelsAfter: Duration.zero,
       ),
     );
   }
@@ -78,18 +77,20 @@ class SupabaseRescueDataSource implements RescueDataSource {
 
     final prevChannel = _channel;
     final prevController = _realtimeController;
-    _channel = null;
-    _realtimeController = null;
-    if (prevChannel != null || prevController != null) {
-      unawaited(_cleanupChannelResources(prevChannel, prevController));
-    }
 
     final controller = StreamController<RescueRealtimeEvent>.broadcast();
     _realtimeController = controller;
+    RealtimeChannel? channel;
+    var cleanedUpPrev = false;
 
     try {
-      final channel = client.channel(_channelName);
+      channel = client.channel(_channelName);
       _channel = channel;
+
+      if (prevChannel != null || prevController != null) {
+        cleanedUpPrev = true;
+        unawaited(_cleanupChannelResources(prevChannel, prevController));
+      }
 
       channel
           .onPostgresChanges(
@@ -139,6 +140,18 @@ class SupabaseRescueDataSource implements RescueDataSource {
       };
     } catch (e) {
       debugPrint('MAMO realtime subscribe failed: $e');
+      if (identical(_channel, channel)) {
+        _channel = null;
+      }
+      if (identical(_realtimeController, controller)) {
+        _realtimeController = null;
+      }
+      if (channel != null || !controller.isClosed) {
+        unawaited(_cleanupChannelResources(channel, controller));
+      }
+      if (!cleanedUpPrev && (prevChannel != null || prevController != null)) {
+        unawaited(_cleanupChannelResources(prevChannel, prevController));
+      }
       onConnectionChanged?.call(false);
     }
 
@@ -215,6 +228,7 @@ class SupabaseRescueDataSource implements RescueDataSource {
       realtime.conn = null;
       realtime.reconnectTimer.reset();
       realtime.heartbeatTimer?.cancel();
+      unawaited(realtime.disconnect());
       if (conn != null) {
         unawaited(conn.sink.close().catchError((Object _) {}));
       }
@@ -226,7 +240,11 @@ class SupabaseRescueDataSource implements RescueDataSource {
         if (injected != null) {
           await injected.removeChannel(channel);
         } else {
-          await channel.unsubscribe(Duration.zero);
+          final unsubFuture = channel.unsubscribe(Duration.zero);
+          if (owned != null) {
+            unawaited(owned.realtime.disconnect());
+          }
+          await unsubFuture;
         }
       } catch (e) {
         debugPrint('MAMO realtime channel cleanup error: $e');
