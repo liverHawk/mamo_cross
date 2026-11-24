@@ -178,10 +178,10 @@ class SupabaseRescueDataSource implements RescueDataSource {
   Future<Map<String, dynamic>?> insertRequest(
     Map<String, dynamic> payload,
   ) async {
-    final client = _resolveClient();
-    if (client == null) return null;
-
     try {
+      final client = _resolveClient();
+      if (client == null) return null;
+
       final row = await client
           .from(_tableName)
           .insert(payload)
