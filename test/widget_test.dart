@@ -1,5 +1,7 @@
 import 'dart:async';
+import 'dart:typed_data';
 
+import 'package:flutter_map/flutter_map.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mamo_cross/config/supabase_config.dart';
 import 'package:mamo_cross/main.dart';
@@ -17,7 +19,32 @@ import 'package:mamo_cross/views/requests_view.dart';
 import 'package:mamo_cross/views/settings_view.dart';
 import 'package:mamo_cross/views/status_view.dart';
 import 'package:mamo_cross/widgets/app_sidebar.dart';
+import 'package:mamo_cross/widgets/gsi_map_view.dart';
 import 'package:material_ui/material_ui.dart';
+
+const List<int> _testTransparentPng = <int>[
+  0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A,
+  0x00, 0x00, 0x00, 0x0D, 0x49, 0x48, 0x44, 0x52,
+  0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01,
+  0x08, 0x06, 0x00, 0x00, 0x00, 0x1F, 0x15, 0xC4,
+  0x89, 0x00, 0x00, 0x00, 0x0A, 0x49, 0x44, 0x41,
+  0x54, 0x78, 0x9C, 0x63, 0x00, 0x01, 0x00, 0x00,
+  0x05, 0x00, 0x01, 0x0D, 0x0A, 0x2D, 0xB4, 0x00,
+  0x00, 0x00, 0x00, 0x49, 0x45, 0x4E, 0x44, 0xAE,
+  0x42, 0x60, 0x82,
+];
+
+class _FakeMemoryTileProvider extends TileProvider {
+  _FakeMemoryTileProvider()
+      : _image = MemoryImage(Uint8List.fromList(_testTransparentPng));
+
+  final ImageProvider _image;
+
+  @override
+  ImageProvider getImage(TileCoordinates coordinates, TileLayer options) {
+    return _image;
+  }
+}
 
 class FakeRescueDataSource implements RescueDataSource {
   FakeRescueDataSource({
@@ -1140,6 +1167,293 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(selectedListItems(), findsOneWidget);
+      expect(find.text('ID：mamo-0004'), findsOneWidget);
+    });
+  });
+
+  group('RescueRequest coordinates & RescueStore coordinate sync', () {
+    test('parses latitude/longitude and lat/lng/lon from numbers or strings', () {
+      final explicit = RescueRequest.fromSupabaseRow({
+        'id': 10,
+        'request_id': 'MAMO-10',
+        'latitude': 34.0558,
+        'longitude': 131.5646,
+      });
+      expect(explicit.latitude, closeTo(34.0558, 0.0001));
+      expect(explicit.longitude, closeTo(131.5646, 0.0001));
+
+      final stringLatLng = RescueRequest.fromSupabaseRow({
+        'id': 11,
+        'request_id': 'MAMO-11',
+        'lat': '34.3747',
+        'lng': '131.1835',
+      });
+      expect(stringLatLng.latitude, closeTo(34.3747, 0.0001));
+      expect(stringLatLng.longitude, closeTo(131.1835, 0.0001));
+
+      final withLon = RescueRequest.parseCoordinates({
+        'lat': 33.95,
+        'lon': '130.94',
+      });
+      expect(withLon, isNotNull);
+      expect(withLon!.latitude, closeTo(33.95, 0.0001));
+      expect(withLon.longitude, closeTo(130.94, 0.0001));
+
+      // 範囲外や不正な座標は null になり住所フォールバックが使われる
+      expect(
+        RescueRequest.parseCoordinates({'latitude': 95.0, 'longitude': 131.0}),
+        isNull,
+      );
+      expect(
+        RescueRequest.parseCoordinates({'latitude': 34.0, 'longitude': -185.0}),
+        isNull,
+      );
+      expect(
+        RescueRequest.parseCoordinates({'latitude': 'abc', 'longitude': 131.0}),
+        isNull,
+      );
+    });
+
+    test('resolves coordinates from Yamaguchi city names with prefectural default fallback', () {
+      final hofu = RescueRequest.fromSupabaseRow({
+        'id': 12,
+        'request_id': 'MAMO-12',
+        'location_text': '山口県防府市寿町7-1',
+      });
+      expect(hofu.latitude, closeTo(34.0558, 0.0001));
+      expect(hofu.longitude, closeTo(131.5646, 0.0001));
+
+      final unknown = RescueRequest.fromSupabaseRow({
+        'id': 13,
+        'request_id': 'MAMO-13',
+        'location_text': '詳細不明の地点',
+      });
+      expect(unknown.latitude, RescueRequest.defaultLatitude);
+      expect(unknown.longitude, RescueRequest.defaultLongitude);
+    });
+
+    test('preserves local coordinates on DB merge without explicit coords and updates on remote coord change', () async {
+      final ds = FakeRescueDataSource(
+        initialRows: [
+          {
+            'id': 1,
+            'request_id': 'mamo-0005',
+            'user_name': '山田 太郎',
+            'location': '住所テキストのみ',
+            'status': '未対応',
+          },
+          {
+            'id': 2,
+            'request_id': 'mamo-0004',
+            'user_name': '佐藤 花子',
+            'latitude': 34.0123,
+            'longitude': 131.1234,
+            'status': '未対応',
+          },
+        ],
+      );
+      final store = RescueStore(
+        startClock: false,
+        dataSource: ds,
+        autoInitialize: false,
+      );
+      addTearDown(store.dispose);
+
+      await store.initializeRealtime();
+
+      // DB行に座標がない場合はローカル初期値の山口市座標を引き継ぐ
+      final mamo5 = store.requests.firstWhere((r) => r.id == 'mamo-0005');
+      expect(mamo5.latitude, closeTo(34.1785, 0.0001));
+      expect(mamo5.longitude, closeTo(131.4737, 0.0001));
+
+      // DB行に明示座標がある場合はDB座標を採用する
+      final mamo4 = store.requests.firstWhere((r) => r.id == 'mamo-0004');
+      expect(mamo4.latitude, closeTo(34.0123, 0.0001));
+      expect(mamo4.longitude, closeTo(131.1234, 0.0001));
+
+      // applyRemoteUpdate: 座標付き UPDATE で更新、座標なし UPDATE で保持
+      ds.emitUpdate({'id': 1, 'latitude': 34.2222, 'longitude': 131.5555});
+      ds.emitUpdate({'id': 2, 'status': '対応中'});
+      await pumpEventQueue();
+
+      final updated5 = store.requests.firstWhere((r) => r.dbId == '1');
+      expect(updated5.latitude, closeTo(34.2222, 0.0001));
+      expect(updated5.longitude, closeTo(131.5555, 0.0001));
+
+      final updated4 = store.requests.firstWhere((r) => r.dbId == '2');
+      expect(updated4.status, RequestStatus.working);
+      expect(updated4.latitude, closeTo(34.0123, 0.0001));
+      expect(updated4.longitude, closeTo(131.1234, 0.0001));
+    });
+  });
+
+  group('GsiMapView Widget tests', () {
+    testWidgets(
+      'renders GSI pale tile URL, attribution, 5 pins, pin tap callback, and zoom/fit controls',
+      (tester) async {
+        final store = RescueStore(startClock: false);
+        addTearDown(store.dispose);
+
+        String? tappedId;
+        await tester.pumpWidget(
+          MaterialApp(
+            home: Scaffold(
+              body: SizedBox(
+                width: 800,
+                height: 500,
+                child: GsiMapView(
+                  requests: store.requests,
+                  height: 500,
+                  initialZoom: 8.5,
+                  tileProvider: _FakeMemoryTileProvider(),
+                  onPinTap: (id) => tappedId = id,
+                ),
+              ),
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+
+        // 国土地理院 淡色地図タイル URL と出典表示の確認
+        final tileLayer = tester.widget<TileLayer>(find.byType(TileLayer));
+        expect(tileLayer.urlTemplate, GsiMapView.gsiPaleTileUrl);
+        expect(
+          tileLayer.urlTemplate,
+          'https://cyberjapandata.gsi.go.jp/xyz/pale/{z}/{x}/{y}.png',
+        );
+        expect(find.text('出典：国土地理院（地理院タイル・淡色地図）'), findsOneWidget);
+
+        // 5件のマーカーが描画され、タップで該当IDが通知されること
+        final markerLayer = tester.widget<MarkerLayer>(find.byType(MarkerLayer));
+        expect(markerLayer.markers.length, 5);
+
+        await tester.tap(
+          find.byWidgetPredicate(
+            (w) => w is Tooltip && (w.message ?? '').startsWith('山田 太郎：'),
+          ),
+        );
+        await tester.pump();
+        expect(tappedId, 'mamo-0005');
+
+        // 拡大・縮小・全体表示ボタンが動作しズーム値が変化すること
+        final flutterMap = tester.widget<FlutterMap>(find.byType(FlutterMap));
+        final controller = flutterMap.mapController!;
+        expect(controller.camera.zoom, closeTo(8.5, 0.01));
+
+        await tester.tap(find.byTooltip('拡大'));
+        await tester.pumpAndSettle();
+        expect(controller.camera.zoom, closeTo(9.5, 0.01));
+
+        await tester.tap(find.byTooltip('縮小'));
+        await tester.pumpAndSettle();
+        expect(controller.camera.zoom, closeTo(8.5, 0.01));
+
+        await tester.tap(find.byTooltip('全体を表示'));
+        await tester.pumpAndSettle();
+        expect(controller.camera.zoom, inInclusiveRange(GsiMapView.minZoom, 14.0));
+      },
+    );
+
+    testWidgets('fit-all handles 0 requests, 1 request, and coincident requests safely', (
+      tester,
+    ) async {
+      final base = RescueStore(startClock: false).requests.first;
+
+      // 0件
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: GsiMapView(
+              requests: const [],
+              height: 300,
+              tileProvider: _FakeMemoryTileProvider(),
+              onPinTap: (_) {},
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.byTooltip('全体を表示'));
+      await tester.pumpAndSettle();
+
+      // 1件
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: GsiMapView(
+              requests: [base],
+              height: 300,
+              tileProvider: _FakeMemoryTileProvider(),
+              onPinTap: (_) {},
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.byTooltip('全体を表示'));
+      await tester.pumpAndSettle();
+      expect(
+        tester.widget<FlutterMap>(find.byType(FlutterMap)).mapController!.camera.zoom,
+        closeTo(14.0, 0.01),
+      );
+
+      // 同一座標の複数件
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: GsiMapView(
+              requests: [
+                base,
+                base.copyWith(id: 'mamo-dup'),
+              ],
+              height: 300,
+              tileProvider: _FakeMemoryTileProvider(),
+              onPinTap: (_) {},
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.byTooltip('全体を表示'));
+      await tester.pumpAndSettle();
+      expect(
+        tester.widget<FlutterMap>(find.byType(FlutterMap)).mapController!.camera.zoom,
+        closeTo(14.0, 0.01),
+      );
+    });
+
+    testWidgets('tapping pin inside MapView navigates to RequestsView with selected item', (
+      tester,
+    ) async {
+      tester.view.physicalSize = const Size(1280, 800);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(() {
+        tester.view.resetPhysicalSize();
+        tester.view.resetDevicePixelRatio();
+      });
+
+      final ds = FakeRescueDataSource();
+      await tester.pumpWidget(MamoApp(dataSource: ds, startClock: false));
+      await tester.pumpAndSettle();
+
+      await tester.tap(
+        find.descendant(
+          of: find.byType(AppSidebar),
+          matching: find.text('位置情報マップ'),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(find.byType(MapView), findsOneWidget);
+      expect(find.byType(GsiMapView), findsOneWidget);
+
+      await tester.tap(
+        find.byWidgetPredicate(
+          (w) => w is Tooltip && (w.message ?? '').startsWith('佐藤 花子：'),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.byType(RequestsView), findsOneWidget);
       expect(find.text('ID：mamo-0004'), findsOneWidget);
     });
   });
