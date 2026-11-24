@@ -41,6 +41,7 @@ class _MamoShellPageState extends State<MamoShellPage> {
   late RescueStore _store;
   late bool _ownsStore;
   StreamSubscription<RescueRequest>? _alertSubscription;
+  bool _closingStaleDrawer = false;
 
   @override
   void initState() {
@@ -128,9 +129,21 @@ class _MamoShellPageState extends State<MamoShellPage> {
     final width = MediaQuery.sizeOf(context).width;
     final isMobile = width < 650;
     final sidebarWidth = width >= 900 ? 218.0 : 180.0;
+    final isDrawerOpen = _scaffoldKey.currentState?.isDrawerOpen ?? false;
+
+    if (!isMobile && isDrawerOpen && !_closingStaleDrawer) {
+      _closingStaleDrawer = true;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        _closingStaleDrawer = false;
+        if (!mounted) return;
+        _scaffoldKey.currentState?.closeDrawer();
+        setState(() {});
+      });
+    }
 
     return Scaffold(
       key: _scaffoldKey,
+      drawerEnableOpenDragGesture: isMobile,
       drawer: isMobile
           ? Drawer(
               width: 218,
@@ -147,7 +160,7 @@ class _MamoShellPageState extends State<MamoShellPage> {
                 ),
               ),
             )
-          : null,
+          : (isDrawerOpen ? const SizedBox.shrink() : null),
       body: SafeArea(
         child: ListenableBuilder(
           listenable: _store,
