@@ -14,7 +14,7 @@ const List<RescueRequest> _initialRequests = [
     age: 32,
     gender: '男性',
     agency: AgencyType.emergency,
-    location: '○○市○○町1-2-3付近',
+    location: '山口県山口市亀山町2-1付近',
     distance: '約120m先',
     content: '転倒して足を痛めて動けません。意識はあります。早急に救助をお願いします。',
     consideration: 'ホルモン治療中',
@@ -29,7 +29,7 @@ const List<RescueRequest> _initialRequests = [
     age: 45,
     gender: '女性',
     agency: AgencyType.fire,
-    location: '○○市○○町4-5付近',
+    location: '山口県下関市南部町1-1付近',
     distance: '約550m先',
     content: '建物内に取り残されています。',
     consideration: '医療的ケアが必要',
@@ -44,7 +44,7 @@ const List<RescueRequest> _initialRequests = [
     age: 28,
     gender: '男性',
     agency: AgencyType.sdf,
-    location: '○○市○○町2-1付近',
+    location: '山口県萩市大字江向510付近',
     distance: '約1.2km先',
     content: '道路が塞がれて移動できません。',
     consideration: 'なし',
@@ -59,7 +59,7 @@ const List<RescueRequest> _initialRequests = [
     age: 36,
     gender: '女性',
     agency: AgencyType.police,
-    location: '○○市○○町3-7付近',
+    location: '山口県宇部市常盤町1-7-1付近',
     distance: '約2.5km先',
     content: '家族と連絡が取れず避難場所から動けません。',
     consideration: '妊娠中',
@@ -74,7 +74,7 @@ const List<RescueRequest> _initialRequests = [
     age: 52,
     gender: '男性',
     agency: AgencyType.fire,
-    location: '○○市○○町5-8付近',
+    location: '山口県岩国市今津町1-14-51付近',
     distance: '約3.8km先',
     content: '自宅周辺が浸水しています。救助をお願いします。',
     consideration: '人工呼吸器使用',
@@ -110,7 +110,7 @@ class RescueStore extends ChangeNotifier {
   RequestStatus? _statusFilter;
   final List<RescueRequest> _requests;
   String _selectedId = 'mamo-0005';
-  String _municipalityName = '○○市 災害対策本部';
+  String _municipalityName = '山口県 災害対策本部';
   bool _realtimeNotification = true;
   String _currentTime = '';
   bool _isRealtimeConnected = false;
