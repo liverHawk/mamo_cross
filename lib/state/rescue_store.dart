@@ -5,92 +5,13 @@ import 'package:material_ui/material_ui.dart';
 import '../models/rescue_request.dart';
 import '../services/rescue_data_source.dart';
 
-/// 初期デモデータ（mamo/app/composables/useRescueData.ts と同一）
-const List<RescueRequest> _initialRequests = [
-  RescueRequest(
-    id: 'mamo-0005',
-    time: '10:24:35',
-    name: '山田 太郎',
-    age: 32,
-    gender: '男性',
-    agency: AgencyType.emergency,
-    location: '山口県山口市亀山町2-1付近',
-    distance: '約120m先',
-    content: '転倒して足を痛めて動けません。意識はあります。早急に救助をお願いします。',
-    consideration: 'ホルモン治療中',
-    latPercent: 24,
-    topPercent: 28,
-    status: RequestStatus.pending,
-  ),
-  RescueRequest(
-    id: 'mamo-0004',
-    time: '10:21:18',
-    name: '佐藤 花子',
-    age: 45,
-    gender: '女性',
-    agency: AgencyType.fire,
-    location: '山口県下関市南部町1-1付近',
-    distance: '約550m先',
-    content: '建物内に取り残されています。',
-    consideration: '医療的ケアが必要',
-    latPercent: 48,
-    topPercent: 55,
-    status: RequestStatus.pending,
-  ),
-  RescueRequest(
-    id: 'mamo-0003',
-    time: '10:18:59',
-    name: '鈴木 一郎',
-    age: 28,
-    gender: '男性',
-    agency: AgencyType.sdf,
-    location: '山口県萩市大字江向510付近',
-    distance: '約1.2km先',
-    content: '道路が塞がれて移動できません。',
-    consideration: 'なし',
-    latPercent: 67,
-    topPercent: 31,
-    status: RequestStatus.pending,
-  ),
-  RescueRequest(
-    id: 'mamo-0002',
-    time: '10:15:42',
-    name: '田中 美咲',
-    age: 36,
-    gender: '女性',
-    agency: AgencyType.police,
-    location: '山口県宇部市常盤町1-7-1付近',
-    distance: '約2.5km先',
-    content: '家族と連絡が取れず避難場所から動けません。',
-    consideration: '妊娠中',
-    latPercent: 37,
-    topPercent: 72,
-    status: RequestStatus.working,
-  ),
-  RescueRequest(
-    id: 'mamo-0001',
-    time: '10:10:08',
-    name: '高橋 健',
-    age: 52,
-    gender: '男性',
-    agency: AgencyType.fire,
-    location: '山口県岩国市今津町1-14-51付近',
-    distance: '約3.8km先',
-    content: '自宅周辺が浸水しています。救助をお願いします。',
-    consideration: '人工呼吸器使用',
-    latPercent: 78,
-    topPercent: 60,
-    status: RequestStatus.working,
-  ),
-];
-
 /// MAMO アプリ全体の状態管理ストア
 class RescueStore extends ChangeNotifier {
   RescueStore({
     bool startClock = true,
     this.dataSource,
     bool autoInitialize = true,
-  }) : _requests = List<RescueRequest>.of(_initialRequests) {
+  }) : _requests = <RescueRequest>[] {
     _updateClockValue();
     if (startClock) {
       _clockTimer = Timer.periodic(const Duration(seconds: 1), (_) {
@@ -109,7 +30,7 @@ class RescueStore extends ChangeNotifier {
   AgencyType? _currentAgencyFilter;
   RequestStatus? _statusFilter;
   final List<RescueRequest> _requests;
-  String _selectedId = 'mamo-0005';
+  String _selectedId = '';
   String _municipalityName = '山口県 災害対策本部';
   bool _realtimeNotification = true;
   String _currentTime = '';
@@ -264,30 +185,18 @@ class RescueStore extends ChangeNotifier {
       return false;
     }
 
-    var mergedReq = req;
-    final localMatchIndex = _requests.indexWhere(
-      (v) => v.dbId == null && v.id == req.id,
-    );
-    if (localMatchIndex != -1) {
-      final existingLocal = _requests.removeAt(localMatchIndex);
-      mergedReq = req.copyWith(
-        age: req.age != 0 ? req.age : existingLocal.age,
-        gender: req.gender.isNotEmpty ? req.gender : existingLocal.gender,
-        latPercent: existingLocal.latPercent,
-        topPercent: existingLocal.topPercent,
-      );
-    } else if (req.dbId != null &&
-        _requests.any((v) => v.id == mergedReq.id)) {
-      mergedReq = mergedReq.copyWith(id: '${mergedReq.id}#${req.dbId}');
+    var nextReq = req;
+    if (req.dbId != null && _requests.any((v) => v.id == nextReq.id)) {
+      nextReq = nextReq.copyWith(id: '${nextReq.id}#${req.dbId}');
     }
 
-    _requests.insert(0, mergedReq);
-    _selectedId = mergedReq.id;
+    _requests.insert(0, nextReq);
+    _selectedId = nextReq.id;
     notifyListeners();
     if (notifyAlert &&
         _realtimeNotification &&
         !_incomingAlertController.isClosed) {
-      _incomingAlertController.add(mergedReq);
+      _incomingAlertController.add(nextReq);
     }
     return true;
   }
