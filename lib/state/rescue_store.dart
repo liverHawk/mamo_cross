@@ -94,6 +94,7 @@ class RescueStore extends ChangeNotifier {
     _updateClockValue();
     if (startClock) {
       _clockTimer = Timer.periodic(const Duration(seconds: 1), (_) {
+        if (_disposed) return;
         _updateClockValue();
         notifyListeners();
       });
@@ -161,30 +162,31 @@ class RescueStore extends ChangeNotifier {
   }
 
   void setView(MamoView view) {
-    if (_currentView == view) return;
+    if (_disposed || _currentView == view) return;
     _currentView = view;
     notifyListeners();
   }
 
   void setStatusFilter(RequestStatus? status) {
-    if (_statusFilter == status) return;
+    if (_disposed || _statusFilter == status) return;
     _statusFilter = status;
     notifyListeners();
   }
 
   void setAgencyFilter(AgencyType? agency) {
-    if (_currentAgencyFilter == agency) return;
+    if (_disposed || _currentAgencyFilter == agency) return;
     _currentAgencyFilter = agency;
     notifyListeners();
   }
 
   void selectRequest(String id) {
-    if (_selectedId == id) return;
+    if (_disposed || _selectedId == id) return;
     _selectedId = id;
     notifyListeners();
   }
 
   void selectFromMap(String id) {
+    if (_disposed) return;
     _selectedId = id;
     _currentView = MamoView.requests;
     notifyListeners();
@@ -281,8 +283,9 @@ class RescueStore extends ChangeNotifier {
     if (index == -1) return;
 
     final existing = _requests[index];
-    final nextStatus = row['status'] != null
-        ? RescueRequest.parseStatus(row['status'])
+    final rawStatus = row['status']?.toString().trim();
+    final nextStatus = (rawStatus != null && rawStatus.isNotEmpty)
+        ? RescueRequest.parseStatus(rawStatus)
         : existing.status;
     final nextName = _pickUpdatedText(
       [row['requester_name'], row['user_name']],
@@ -331,6 +334,7 @@ class RescueStore extends ChangeNotifier {
   }
 
   Future<void> changeStatus(String id, RequestStatus newStatus) async {
+    if (_disposed) return;
     final index = _requests.indexWhere((r) => r.id == id);
     if (index == -1) return;
     final target = _requests[index];
@@ -350,6 +354,7 @@ class RescueStore extends ChangeNotifier {
   }
 
   void filterAgency(AgencyType agency) {
+    if (_disposed) return;
     _currentAgencyFilter = agency;
     _statusFilter = null;
     _currentView = MamoView.requests;
@@ -360,6 +365,7 @@ class RescueStore extends ChangeNotifier {
     required String municipalityName,
     required bool realtimeNotification,
   }) {
+    if (_disposed) return;
     final trimmed = municipalityName.trim();
     if (trimmed.isNotEmpty) {
       _municipalityName = trimmed;
@@ -369,6 +375,7 @@ class RescueStore extends ChangeNotifier {
   }
 
   void _updateClockValue() {
+    if (_disposed) return;
     final now = DateTime.now();
     final h = now.hour.toString().padLeft(2, '0');
     final m = now.minute.toString().padLeft(2, '0');
@@ -378,14 +385,15 @@ class RescueStore extends ChangeNotifier {
 
   @override
   void dispose() {
+    if (_disposed) return;
     _disposed = true;
     _clockTimer?.cancel();
-    unawaited(_realtimeSubscription?.cancel());
-    unawaited(_incomingAlertController.close());
     final ds = dataSource;
     if (ds != null) {
       unawaited(ds.dispose());
     }
+    unawaited(_realtimeSubscription?.cancel());
+    unawaited(_incomingAlertController.close());
     super.dispose();
   }
 }
