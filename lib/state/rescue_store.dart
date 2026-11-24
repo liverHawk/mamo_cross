@@ -187,14 +187,30 @@ class RescueStore extends ChangeNotifier {
     }
 
     final rawRequestId = row['request_id']?.toString().trim() ?? '';
+    if (rawRequestId.isNotEmpty &&
+        req.dbId == null &&
+        _requests.any((v) => v.id == req.id)) {
+      return false;
+    }
+
     if (req.dbId != null && rawRequestId.isNotEmpty) {
       final localIndex = _requests.indexWhere(
         (v) => v.dbId == null && v.id == req.id,
       );
       if (localIndex != -1) {
-        _requests[localIndex] =
-            _requests[localIndex].copyWith(dbId: req.dbId);
+        final localReq = _requests[localIndex];
+        _requests[localIndex] = localReq.copyWith(dbId: req.dbId);
         notifyListeners();
+        final ds = dataSource;
+        if (ds != null && localReq.status != req.status) {
+          unawaited(
+            Future<void>.sync(
+              () => ds.updateStatus(dbId: req.dbId!, status: localReq.status),
+            ).catchError((Object e) {
+              debugPrint('MAMO追送ステータス更新エラー: $e');
+            }),
+          );
+        }
         return false;
       }
     }
@@ -429,6 +445,16 @@ class RescueStore extends ChangeNotifier {
       final reconciled = current.copyWith(dbId: insertedDbId);
       _requests[index] = reconciled;
       notifyListeners();
+      final remoteStatus = insertedRow['status'] != null
+          ? RescueRequest.parseStatus(insertedRow['status'])
+          : RequestStatus.pending;
+      if (reconciled.status != remoteStatus) {
+        try {
+          await ds.updateStatus(dbId: insertedDbId, status: reconciled.status);
+        } catch (e) {
+          debugPrint('MAMO追送ステータス更新エラー: $e');
+        }
+      }
       return reconciled;
     }
     return current;

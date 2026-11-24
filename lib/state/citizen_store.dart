@@ -341,6 +341,8 @@ class CitizenStore extends ChangeNotifier {
       updateMySafety(CitizenSafetyStatus.rescueNeeded, showFeedbackToast: false);
     }
 
+    final previousHeadId =
+        rescueStore.requests.isNotEmpty ? rescueStore.requests.first.id : null;
     final future = rescueStore.submitCitizenRequest(
       requesterName: resolvedName,
       rescueDetails: resolvedDetail,
@@ -349,12 +351,16 @@ class CitizenStore extends ChangeNotifier {
       distanceText: distanceText,
     );
 
+    String? immediateId;
     if (!_disposed) {
-      final immediate = rescueStore.requests.isNotEmpty
+      final immediate = (rescueStore.requests.isNotEmpty &&
+              rescueStore.requests.first.id != previousHeadId)
           ? rescueStore.requests.first
           : null;
+      immediateId =
+          immediate?.id ?? 'MAMO-${DateTime.now().millisecondsSinceEpoch}';
       _latestRescueSummary = RescueSummary(
-        requestId: immediate?.id ?? 'MAMO-${DateTime.now().millisecondsSinceEpoch}',
+        requestId: immediateId,
         time: immediate?.time ?? _formatHHmm(DateTime.now()),
         requesterName: immediate?.name ?? resolvedName,
         locationText: immediate?.location ?? resolvedLocation,
@@ -367,7 +373,9 @@ class CitizenStore extends ChangeNotifier {
     }
 
     final submitted = await future;
-    if (_disposed) {
+    if (_disposed ||
+        immediateId == null ||
+        _latestRescueSummary?.requestId != immediateId) {
       return submitted;
     }
 
