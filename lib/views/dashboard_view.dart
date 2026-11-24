@@ -3,7 +3,7 @@ import 'package:material_ui/material_ui.dart';
 import '../models/rescue_request.dart';
 import '../state/rescue_store.dart';
 import '../theme/mamo_theme.dart';
-import '../widgets/fake_map_view.dart';
+import '../widgets/gsi_map_view.dart';
 import '../widgets/stat_card.dart';
 import '../widgets/status_badge.dart';
 
@@ -132,9 +132,10 @@ class DashboardView extends StatelessWidget {
                 ],
               ),
               const SizedBox(height: 14),
-              FakeMapView(
+              GsiMapView(
                 requests: store.requests,
                 height: 280,
+                initialZoom: 8.2,
                 onPinTap: store.selectFromMap,
               ),
             ],
