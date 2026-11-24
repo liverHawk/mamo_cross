@@ -4,6 +4,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:mamo_cross/config/supabase_config.dart';
 import 'package:mamo_cross/main.dart';
 import 'package:mamo_cross/models/rescue_request.dart';
+import 'package:mamo_cross/pages/mamo_shell_page.dart';
 import 'package:mamo_cross/services/rescue_data_source.dart';
 import 'package:mamo_cross/services/supabase_rescue_data_source.dart';
 import 'package:mamo_cross/state/rescue_store.dart';
@@ -33,6 +34,7 @@ class FakeRescueDataSource implements RescueDataSource {
   final bool connectOnSubscribe;
 
   final List<int> fetchLimits = [];
+  int subscribeCalls = 0;
   final List<({String dbId, RequestStatus status})> updateCalls = [];
   final StreamController<RescueRealtimeEvent> _controller =
       StreamController<RescueRealtimeEvent>.broadcast();
@@ -58,6 +60,7 @@ class FakeRescueDataSource implements RescueDataSource {
   Stream<RescueRealtimeEvent> subscribeRequests({
     void Function(bool connected)? onConnectionChanged,
   }) {
+    subscribeCalls++;
     _onConnectionChanged = onConnectionChanged;
     if (subscribeError != null) {
       onConnectionChanged?.call(false);
@@ -427,6 +430,84 @@ void main() {
 
       expect(ds.disposed, isTrue);
     });
+
+    test('mutators and changeStatus are safe no-ops after store.dispose()', () async {
+      final ds = FakeRescueDataSource(
+        initialRows: [
+          {'id': 600, 'request_id': 'MAMO-600', 'status': '未対応'},
+        ],
+      );
+      final store = RescueStore(startClock: false, dataSource: ds);
+      await store.initializeRealtime();
+      store.dispose();
+
+      // 破棄後の各種ミューテーション呼び出しで例外が発生しないこと
+      await store.changeStatus('MAMO-600', RequestStatus.done);
+      store.setView(MamoView.map);
+      store.setStatusFilter(RequestStatus.working);
+      store.setAgencyFilter(AgencyType.fire);
+      store.selectRequest('mamo-0001');
+      store.selectFromMap('mamo-0002');
+      store.filterAgency(AgencyType.police);
+      store.updateSettings(
+        municipalityName: '破棄後市',
+        realtimeNotification: false,
+      );
+      expect(ds.updateCalls, isEmpty);
+    });
+
+    test('concurrent initializeRealtime invokes fetch and subscribe only once', () async {
+      final ds = FakeRescueDataSource(
+        initialRows: [
+          {'id': 610, 'request_id': 'MAMO-610', 'status': '未対応'},
+        ],
+      );
+      final store = RescueStore(
+        startClock: false,
+        dataSource: ds,
+        autoInitialize: false,
+      );
+      addTearDown(store.dispose);
+
+      await Future.wait([
+        store.initializeRealtime(),
+        store.initializeRealtime(),
+        store.initializeRealtime(),
+      ]);
+
+      expect(ds.fetchLimits, [50]);
+      expect(ds.subscribeCalls, 1);
+    });
+
+    test('applyRemoteUpdate with empty or whitespace status preserves existing status', () async {
+      final ds = FakeRescueDataSource(
+        initialRows: [
+          {
+            'id': 620,
+            'request_id': 'MAMO-620',
+            'requester_name': '状態保持さん',
+            'status': '対応中',
+          },
+        ],
+      );
+      final store = RescueStore(startClock: false, dataSource: ds);
+      addTearDown(store.dispose);
+      await store.initializeRealtime();
+
+      ds.emitUpdate({'id': 620, 'status': ''});
+      await pumpEventQueue();
+      expect(
+        store.requests.firstWhere((r) => r.dbId == '620').status,
+        RequestStatus.working,
+      );
+
+      ds.emitUpdate({'id': 620, 'status': '   '});
+      await pumpEventQueue();
+      expect(
+        store.requests.firstWhere((r) => r.dbId == '620').status,
+        RequestStatus.working,
+      );
+    });
   });
 
   group('MamoApp Widget tests', () {
@@ -606,6 +687,216 @@ void main() {
       // 未対応の山田 太郎は表示され、対応中の田中 美咲は一覧から除外される
       expect(find.textContaining('山田 太郎'), findsWidgets);
       expect(find.textContaining('田中 美咲'), findsNothing);
+    });
+
+    testWidgets('MamoShellPage.didUpdateWidget swaps store and dataSource cleanly', (
+      tester,
+    ) async {
+      setTestViewport(tester, const Size(1280, 800));
+
+      final ds1 = FakeRescueDataSource();
+      final store1 = RescueStore(startClock: false, dataSource: ds1);
+      addTearDown(store1.dispose);
+      await store1.initializeRealtime();
+
+      final ds2 = FakeRescueDataSource(
+        initialRows: [
+          {
+            'id': 801,
+            'request_id': 'MAMO-801',
+            'requester_name': '新ストア初期要請',
+            'status': '未対応',
+          },
+        ],
+      );
+      final store2 = RescueStore(startClock: false, dataSource: ds2);
+      addTearDown(store2.dispose);
+      await store2.initializeRealtime();
+      store2.updateSettings(
+        municipalityName: '新ストア市本部',
+        realtimeNotification: true,
+      );
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: MamoShellPage(store: store1, startClock: false),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(find.text('○○市 災害対策本部 ▾'), findsOneWidget);
+
+      // store1 -> store2 差し替え
+      await tester.pumpWidget(
+        MaterialApp(
+          home: MamoShellPage(store: store2, startClock: false),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(find.text('新ストア市本部 ▾'), findsOneWidget);
+
+      // 旧ストアへの INSERT では SnackBar が発火せず、新ストアのみ反応する
+      ds1.emitInsert({
+        'id': 802,
+        'request_id': 'MAMO-802',
+        'requester_name': '旧ストア通知',
+      });
+      await tester.pump();
+      expect(
+        find.textContaining('旧ストア通知'),
+        findsNothing,
+      );
+
+      ds2.emitInsert({
+        'id': 803,
+        'request_id': 'MAMO-803',
+        'requester_name': '新ストア通知',
+        'distance_text': '約40m先',
+      });
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+      expect(
+        find.text('🚨 新しい救助要請が届きました：新ストア通知　約40m先'),
+        findsOneWidget,
+      );
+
+      // store == null の状態で dataSource を差し替えると旧 owned store/dataSource が破棄される
+      final ownedDs1 = FakeRescueDataSource();
+      final ownedDs2 = FakeRescueDataSource(
+        initialRows: [
+          {
+            'id': 804,
+            'request_id': 'MAMO-804',
+            'requester_name': '差し替え後要請',
+            'status': '未対応',
+          },
+        ],
+      );
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: MamoShellPage(dataSource: ownedDs1, startClock: false),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(ownedDs1.disposed, isFalse);
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: MamoShellPage(dataSource: ownedDs2, startClock: false),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(ownedDs1.disposed, isTrue);
+      expect(ownedDs2.disposed, isFalse);
+      expect(find.textContaining('差し替え後要請'), findsWidgets);
+    });
+
+    testWidgets('resizing from mobile with open Drawer to desktop and back leaves Drawer closed', (
+      tester,
+    ) async {
+      addTearDown(() {
+        tester.view.resetPhysicalSize();
+        tester.view.resetDevicePixelRatio();
+      });
+      tester.view.devicePixelRatio = 1.0;
+      tester.view.physicalSize = const Size(400, 800);
+
+      final ds = FakeRescueDataSource();
+      await tester.pumpWidget(MamoApp(dataSource: ds, startClock: false));
+      await tester.pumpAndSettle();
+
+      // モバイルで Drawer を開く
+      await tester.tap(find.byIcon(Icons.menu));
+      await tester.pumpAndSettle();
+      expect(find.byType(Drawer), findsOneWidget);
+
+      // デスクトップ幅へリサイズすると常設サイドバーに切り替わる
+      tester.view.physicalSize = const Size(1280, 800);
+      await tester.pumpAndSettle();
+      expect(find.byType(Drawer), findsNothing);
+      expect(find.byType(AppSidebar), findsOneWidget);
+
+      // 再びモバイル幅へ戻しても Drawer が閉じたままになっていること
+      tester.view.physicalSize = const Size(400, 800);
+      await tester.pumpAndSettle();
+      expect(find.byType(Drawer), findsNothing);
+      expect(find.byIcon(Icons.menu), findsOneWidget);
+    });
+
+    testWidgets('navigates all 7 views cleanly at tablet width (700x800)', (
+      tester,
+    ) async {
+      setTestViewport(tester, const Size(700, 800));
+
+      final ds = FakeRescueDataSource();
+      await tester.pumpWidget(MamoApp(dataSource: ds, startClock: false));
+      await tester.pumpAndSettle();
+
+      expect(tester.widget<AppSidebar>(find.byType(AppSidebar)).width, 180.0);
+
+      Future<void> tapSidebarLabel(String label) async {
+        await tester.tap(
+          find.descendant(
+            of: find.byType(AppSidebar),
+            matching: find.text(label),
+          ),
+        );
+        await tester.pumpAndSettle();
+      }
+
+      expect(find.byType(DashboardView), findsOneWidget);
+      await tapSidebarLabel('救助要請一覧');
+      expect(find.byType(RequestsView), findsOneWidget);
+      await tapSidebarLabel('位置情報マップ');
+      expect(find.byType(MapView), findsOneWidget);
+      await tapSidebarLabel('関係機関連携');
+      expect(find.byType(PartnersView), findsOneWidget);
+      await tapSidebarLabel('対応状況');
+      expect(find.byType(StatusView), findsOneWidget);
+      await tapSidebarLabel('統計・履歴');
+      expect(find.byType(HistoryView), findsOneWidget);
+      await tapSidebarLabel('設定');
+      expect(find.byType(SettingsView), findsOneWidget);
+    });
+
+    testWidgets('MamoApp with autoConnect: true disposes cleanly without pending timers', (
+      tester,
+    ) async {
+      setTestViewport(tester, const Size(1280, 800));
+
+      // 空設定での autoConnect: true
+      await tester.pumpWidget(
+        MamoApp(
+          startClock: false,
+          autoConnect: true,
+          dataSource: SupabaseRescueDataSource(config: SupabaseConfig.empty),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await tester.pumpWidget(const SizedBox.shrink());
+
+      // デフォルト展示用設定 (autoConnect: true) でも 10s/6s タイマーがリークしないこと
+      await tester.pumpWidget(
+        const MamoApp(startClock: false, autoConnect: true),
+      );
+      await tester.pumpAndSettle();
+      await tester.pumpWidget(const SizedBox.shrink());
+
+      // 閉鎖エンドポイント指定でも未処理タイマーが残らないこと
+      await tester.pumpWidget(
+        MamoApp(
+          startClock: false,
+          autoConnect: true,
+          dataSource: SupabaseRescueDataSource(
+            config: const SupabaseConfig(
+              url: 'http://127.0.0.1:1',
+              publishableKey: 'sb_publishable_test',
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await tester.pumpWidget(const SizedBox.shrink());
     });
   });
 }
