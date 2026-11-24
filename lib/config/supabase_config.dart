@@ -5,10 +5,10 @@ class SupabaseConfig {
     required this.publishableKey,
   });
 
-  /// 展示用デフォルト設定
+  /// 展示用デフォルト設定（新規プロジェクト: mamo-cross）
   static const exhibition = SupabaseConfig(
-    url: 'https://zoxmtqpoglnwjprsmfkq.supabase.co',
-    publishableKey: 'sb_publishable_AmFVQVIe2eeWmUp1p8S__w_OEBXhxoz',
+    url: 'https://qmbdouenpcquabahxryt.supabase.co',
+    publishableKey: 'sb_publishable_06W02bS6DJ4-pcoyg86Zaw_uczS0nKv',
   );
 
   /// 未設定フォールバック検証用の空設定
