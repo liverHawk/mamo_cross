@@ -20,6 +20,8 @@ const List<RescueRequest> _initialRequests = [
     consideration: 'ホルモン治療中',
     latPercent: 24,
     topPercent: 28,
+    latitude: 34.1785,
+    longitude: 131.4737,
     status: RequestStatus.pending,
   ),
   RescueRequest(
@@ -35,6 +37,8 @@ const List<RescueRequest> _initialRequests = [
     consideration: '医療的ケアが必要',
     latPercent: 48,
     topPercent: 55,
+    latitude: 33.9578,
+    longitude: 130.9415,
     status: RequestStatus.pending,
   ),
   RescueRequest(
@@ -50,6 +54,8 @@ const List<RescueRequest> _initialRequests = [
     consideration: 'なし',
     latPercent: 67,
     topPercent: 31,
+    latitude: 34.4081,
+    longitude: 131.3991,
     status: RequestStatus.pending,
   ),
   RescueRequest(
@@ -65,6 +71,8 @@ const List<RescueRequest> _initialRequests = [
     consideration: '妊娠中',
     latPercent: 37,
     topPercent: 72,
+    latitude: 33.9516,
+    longitude: 131.2468,
     status: RequestStatus.working,
   ),
   RescueRequest(
@@ -80,6 +88,8 @@ const List<RescueRequest> _initialRequests = [
     consideration: '人工呼吸器使用',
     latPercent: 78,
     topPercent: 60,
+    latitude: 34.1666,
+    longitude: 132.2200,
     status: RequestStatus.working,
   ),
 ];
@@ -270,11 +280,14 @@ class RescueStore extends ChangeNotifier {
     );
     if (localMatchIndex != -1) {
       final existingLocal = _requests.removeAt(localMatchIndex);
+      final parsedCoords = RescueRequest.parseCoordinates(row);
       mergedReq = req.copyWith(
         age: req.age != 0 ? req.age : existingLocal.age,
         gender: req.gender.isNotEmpty ? req.gender : existingLocal.gender,
         latPercent: existingLocal.latPercent,
         topPercent: existingLocal.topPercent,
+        latitude: parsedCoords?.latitude ?? existingLocal.latitude,
+        longitude: parsedCoords?.longitude ?? existingLocal.longitude,
       );
     } else if (req.dbId != null &&
         _requests.any((v) => v.id == mergedReq.id)) {
@@ -329,6 +342,7 @@ class RescueStore extends ChangeNotifier {
       [row['considerations'], row['health_condition'], row['consideration']],
       existing.consideration,
     );
+    final nextCoords = RescueRequest.parseCoordinates(row);
 
     _requests[index] = existing.copyWith(
       status: nextStatus,
@@ -338,6 +352,8 @@ class RescueStore extends ChangeNotifier {
       distance: nextDistance,
       content: nextContent,
       consideration: nextConsideration,
+      latitude: nextCoords?.latitude,
+      longitude: nextCoords?.longitude,
     );
     notifyListeners();
   }
