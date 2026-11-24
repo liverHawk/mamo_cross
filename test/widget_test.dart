@@ -97,6 +97,12 @@ class FakeRescueDataSource implements RescueDataSource {
   }
 
   @override
+  Future<Map<String, dynamic>?> insertRequest(
+    Map<String, dynamic> payload,
+  ) async =>
+      null;
+
+  @override
   Future<void> dispose() async {
     disposed = true;
     await _controller.close();
