@@ -8,6 +8,7 @@ import 'package:mamo_cross/pages/mamo_shell_page.dart';
 import 'package:mamo_cross/services/rescue_data_source.dart';
 import 'package:mamo_cross/services/supabase_rescue_data_source.dart';
 import 'package:mamo_cross/state/rescue_store.dart';
+import 'package:mamo_cross/theme/mamo_theme.dart';
 import 'package:mamo_cross/views/dashboard_view.dart';
 import 'package:mamo_cross/views/history_view.dart';
 import 'package:mamo_cross/views/map_view.dart';
@@ -508,6 +509,144 @@ void main() {
         RequestStatus.working,
       );
     });
+
+    test('uses real Yamaguchi Prefecture addresses and municipality name by default', () {
+      final store = RescueStore(startClock: false);
+      addTearDown(store.dispose);
+
+      expect(store.municipalityName, '山口県 災害対策本部');
+      expect(store.requests.length, 5);
+      for (final req in store.requests) {
+        expect(req.location, contains('山口県'));
+        expect(req.location, isNot(contains('○○')));
+      }
+    });
+
+    test('replaces matching local initial requests on DB sync without duplicating ids', () async {
+      final ds = FakeRescueDataSource(
+        initialRows: [
+          {
+            'id': 1,
+            'request_id': 'mamo-0005',
+            'user_name': '山田 太郎',
+            'request_type': '救急',
+            'location': '山口県山口市亀山町2-1付近',
+            'distance': '約120m先',
+            'detail': '転倒して足を痛めて動けません。意識はあります。早急に救助をお願いします。',
+            'consideration': 'ホルモン治療中',
+            'status': '未対応',
+          },
+          {
+            'id': 2,
+            'request_id': 'mamo-0004',
+            'user_name': '佐藤 花子',
+            'request_type': '消防',
+            'location': '山口県下関市南部町1-1付近',
+            'distance': '約550m先',
+            'detail': '建物内に取り残されています。',
+            'consideration': '医療的ケアが必要',
+            'status': '未対応',
+          },
+          {
+            'id': 3,
+            'request_id': 'mamo-0003',
+            'user_name': '鈴木 一郎',
+            'request_type': '自衛隊',
+            'location': '山口県萩市大字江向510付近',
+            'distance': '約1.2km先',
+            'detail': '道路が塞がれて移動できません。',
+            'consideration': 'なし',
+            'status': '未対応',
+          },
+          {
+            'id': 4,
+            'request_id': 'mamo-0002',
+            'user_name': '田中 美咲',
+            'request_type': '警察',
+            'location': '山口県宇部市常盤町1-7-1付近',
+            'distance': '約2.5km先',
+            'detail': '家族と連絡が取れず避難場所から動けません。',
+            'consideration': '妊娠中',
+            'status': '対応中',
+          },
+          {
+            'id': 5,
+            'request_id': 'mamo-0001',
+            'user_name': '高橋 健',
+            'request_type': '消防',
+            'location': '山口県岩国市今津町1-14-51付近',
+            'distance': '約3.8km先',
+            'detail': '自宅周辺が浸水しています。救助をお願いします。',
+            'consideration': '人工呼吸器使用',
+            'status': '対応中',
+          },
+        ],
+      );
+      final store = RescueStore(
+        startClock: false,
+        dataSource: ds,
+        autoInitialize: false,
+      );
+      addTearDown(store.dispose);
+
+      final localSnapshot = {
+        for (final r in store.requests) r.id: r,
+      };
+
+      await store.initializeRealtime();
+
+      expect(store.requests.length, 5);
+      expect(
+        store.requests.map((r) => r.id).toList(),
+        ['mamo-0005', 'mamo-0004', 'mamo-0003', 'mamo-0002', 'mamo-0001'],
+      );
+      expect(store.selectedId, 'mamo-0005');
+
+      for (final req in store.requests) {
+        final local = localSnapshot[req.id]!;
+        expect(req.dbId, isNotNull);
+        expect(req.latPercent, local.latPercent);
+        expect(req.topPercent, local.topPercent);
+        expect(req.age, local.age);
+        expect(req.gender, local.gender);
+      }
+
+      await store.changeStatus('mamo-0005', RequestStatus.working);
+      expect(ds.updateCalls, [(dbId: '1', status: RequestStatus.working)]);
+    });
+
+    test('disambiguates colliding request_id across distinct dbIds', () async {
+      final ds = FakeRescueDataSource(
+        initialRows: [
+          {
+            'id': 901,
+            'request_id': 'MAMO-DUP',
+            'requester_name': '先着さん',
+            'status': '未対応',
+          },
+          {
+            'id': 902,
+            'request_id': 'MAMO-DUP',
+            'requester_name': '後着さん',
+            'status': '未対応',
+          },
+        ],
+      );
+      final store = RescueStore(
+        startClock: false,
+        dataSource: ds,
+        autoInitialize: false,
+      );
+      addTearDown(store.dispose);
+
+      await store.initializeRealtime();
+
+      final dbItems = store.requests.where((r) => r.dbId != null).toList();
+      expect(dbItems.length, 2);
+      expect(dbItems.map((r) => r.id).toSet().length, 2);
+      expect(dbItems.any((r) => r.id == 'MAMO-DUP'), isTrue);
+      expect(dbItems.any((r) => r.id == 'MAMO-DUP#901'), isTrue);
+    });
   });
 
   group('MamoApp Widget tests', () {
@@ -552,7 +691,7 @@ void main() {
       // デスクトップヘッダー・常設サイドバー（218px）・自治体名・メニューアイコン非表示
       expect(find.text('MAMO'), findsOneWidget);
       expect(find.text('自治体管理システム'), findsOneWidget);
-      expect(find.text('○○市 災害対策本部 ▾'), findsOneWidget);
+      expect(find.text('山口県 災害対策本部 ▾'), findsOneWidget);
       expect(find.byIcon(Icons.menu), findsNothing);
       final sidebar = tester.widget<AppSidebar>(find.byType(AppSidebar));
       expect(sidebar.width, 218.0);
@@ -619,7 +758,7 @@ void main() {
 
       expect(find.byIcon(Icons.menu), findsNothing);
       expect(find.text('自治体管理システム'), findsOneWidget);
-      expect(find.text('○○市 災害対策本部 ▾'), findsNothing);
+      expect(find.text('山口県 災害対策本部 ▾'), findsNothing);
       final sidebar = tester.widget<AppSidebar>(find.byType(AppSidebar));
       expect(sidebar.width, 180.0);
     });
@@ -723,7 +862,7 @@ void main() {
         ),
       );
       await tester.pumpAndSettle();
-      expect(find.text('○○市 災害対策本部 ▾'), findsOneWidget);
+      expect(find.text('山口県 災害対策本部 ▾'), findsOneWidget);
 
       // store1 -> store2 差し替え
       await tester.pumpWidget(
@@ -897,6 +1036,111 @@ void main() {
       );
       await tester.pumpAndSettle();
       await tester.pumpWidget(const SizedBox.shrink());
+    });
+
+    testWidgets('RequestsView highlights exactly one item when DB returns matching initial request_ids', (
+      tester,
+    ) async {
+      setTestViewport(tester, const Size(1280, 800));
+
+      final ds = FakeRescueDataSource(
+        initialRows: [
+          {
+            'id': 1,
+            'request_id': 'mamo-0005',
+            'user_name': '山田 太郎',
+            'request_type': '救急',
+            'location': '山口県山口市亀山町2-1付近',
+            'distance': '約120m先',
+            'detail': '転倒して足を痛めて動けません。意識はあります。早急に救助をお願いします。',
+            'consideration': 'ホルモン治療中',
+            'status': '未対応',
+          },
+          {
+            'id': 2,
+            'request_id': 'mamo-0004',
+            'user_name': '佐藤 花子',
+            'request_type': '消防',
+            'location': '山口県下関市南部町1-1付近',
+            'distance': '約550m先',
+            'detail': '建物内に取り残されています。',
+            'consideration': '医療的ケアが必要',
+            'status': '未対応',
+          },
+          {
+            'id': 3,
+            'request_id': 'mamo-0003',
+            'user_name': '鈴木 一郎',
+            'request_type': '自衛隊',
+            'location': '山口県萩市大字江向510付近',
+            'distance': '約1.2km先',
+            'detail': '道路が塞がれて移動できません。',
+            'consideration': 'なし',
+            'status': '未対応',
+          },
+          {
+            'id': 4,
+            'request_id': 'mamo-0002',
+            'user_name': '田中 美咲',
+            'request_type': '警察',
+            'location': '山口県宇部市常盤町1-7-1付近',
+            'distance': '約2.5km先',
+            'detail': '家族と連絡が取れず避難場所から動けません。',
+            'consideration': '妊娠中',
+            'status': '対応中',
+          },
+          {
+            'id': 5,
+            'request_id': 'mamo-0001',
+            'user_name': '高橋 健',
+            'request_type': '消防',
+            'location': '山口県岩国市今津町1-14-51付近',
+            'distance': '約3.8km先',
+            'detail': '自宅周辺が浸水しています。救助をお願いします。',
+            'consideration': '人工呼吸器使用',
+            'status': '対応中',
+          },
+        ],
+      );
+
+      await tester.pumpWidget(MamoApp(dataSource: ds, startClock: false));
+      await tester.pumpAndSettle();
+
+      await tester.tap(
+        find.descendant(
+          of: find.byType(AppSidebar),
+          matching: find.text('救助要請一覧'),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.byType(RequestsView), findsOneWidget);
+      expect(find.text('すべて 5'), findsOneWidget);
+      expect(find.text('すべて 10'), findsNothing);
+      // OutlinedButton 内の Text.rich 含め一覧・詳細ともに重複していないこと
+      expect(find.textContaining('佐藤 花子'), findsOneWidget);
+      expect(find.text('山口県下関市南部町1-1付近'), findsOneWidget);
+
+      Finder selectedListItems() {
+        return find.byWidgetPredicate((widget) {
+          if (widget is! Container) return false;
+          final decoration = widget.decoration;
+          if (decoration is! BoxDecoration) return false;
+          final border = decoration.border;
+          return decoration.color == MamoColors.selectedItemBg &&
+              border is Border &&
+              border.top.color == MamoColors.primaryBlue;
+        });
+      }
+
+      expect(selectedListItems(), findsOneWidget);
+
+      // 別項目（佐藤 花子）をタップしても常に1件のみフォーカスされること
+      await tester.tap(find.text('山口県下関市南部町1-1付近'));
+      await tester.pumpAndSettle();
+
+      expect(selectedListItems(), findsOneWidget);
+      expect(find.text('ID：mamo-0004'), findsOneWidget);
     });
   });
 }
