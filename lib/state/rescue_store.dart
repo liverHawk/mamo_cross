@@ -263,13 +263,31 @@ class RescueStore extends ChangeNotifier {
         _requests.any((v) => v.dbId != null && v.dbId == req.dbId)) {
       return false;
     }
-    _requests.insert(0, req);
-    _selectedId = req.id;
+
+    var mergedReq = req;
+    final localMatchIndex = _requests.indexWhere(
+      (v) => v.dbId == null && v.id == req.id,
+    );
+    if (localMatchIndex != -1) {
+      final existingLocal = _requests.removeAt(localMatchIndex);
+      mergedReq = req.copyWith(
+        age: req.age != 0 ? req.age : existingLocal.age,
+        gender: req.gender.isNotEmpty ? req.gender : existingLocal.gender,
+        latPercent: existingLocal.latPercent,
+        topPercent: existingLocal.topPercent,
+      );
+    } else if (req.dbId != null &&
+        _requests.any((v) => v.id == mergedReq.id)) {
+      mergedReq = mergedReq.copyWith(id: '${mergedReq.id}#${req.dbId}');
+    }
+
+    _requests.insert(0, mergedReq);
+    _selectedId = mergedReq.id;
     notifyListeners();
     if (notifyAlert &&
         _realtimeNotification &&
         !_incomingAlertController.isClosed) {
-      _incomingAlertController.add(req);
+      _incomingAlertController.add(mergedReq);
     }
     return true;
   }

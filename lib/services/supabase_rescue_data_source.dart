@@ -55,6 +55,7 @@ class SupabaseRescueDataSource implements RescueDataSource {
         .from(_tableName)
         .select('*')
         .order('created_at', ascending: false)
+        .order('id', ascending: true)
         .limit(limit)
         .abortSignal(_disposeCompleter.future);
 
