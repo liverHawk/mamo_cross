@@ -27,6 +27,21 @@ abstract final class MamoColors {
   static const detailHeaderBorder = Color(0xFFE6E9ED);
   static const toolbarText = Color(0xFF596574);
   static const partnerText = Color(0xFF6D7681);
+
+  // 利用者（スマホ）側カラーパレット（mamo-main/index.html 準拠）
+  static const citizenBlue = Color(0xFF075BC7);
+  static const citizenBlueLight = Color(0xFF0B79E6);
+  static const citizenNavy = Color(0xFF071A3D);
+  static const citizenLine = Color(0xFFDCE5F1);
+  static const citizenBg = Color(0xFFF5F8FC);
+  static const citizenHomeBg = Color(0xFFF6F8FB);
+  static const citizenFrameOuterBg = Color(0xFFEAF0F7);
+  static const citizenSkyEnd = Color(0xFFE9F6FF);
+  static const citizenSafeGreen = Color(0xFF0B9C67);
+  static const citizenWarnYellow = Color(0xFFEFB200);
+  static const citizenWarnText = Color(0xFFE49A00);
+  static const citizenHelpRed = Color(0xFFED3C31);
+  static const citizenSoftBlueBg = Color(0xFFF4F8FD);
 }
 
 /// MAMO アプリの共通テーマと装飾
