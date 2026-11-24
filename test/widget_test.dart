@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mamo_cross/config/supabase_config.dart';
 import 'package:mamo_cross/main.dart';
+import 'package:mamo_cross/models/app_mode.dart';
 import 'package:mamo_cross/models/rescue_request.dart';
 import 'package:mamo_cross/pages/mamo_shell_page.dart';
 import 'package:mamo_cross/services/rescue_data_source.dart';
@@ -16,6 +17,7 @@ import 'package:mamo_cross/views/partners_view.dart';
 import 'package:mamo_cross/views/requests_view.dart';
 import 'package:mamo_cross/views/settings_view.dart';
 import 'package:mamo_cross/views/status_view.dart';
+import 'package:mamo_cross/widgets/app_header.dart';
 import 'package:mamo_cross/widgets/app_sidebar.dart';
 import 'package:material_ui/material_ui.dart';
 
@@ -688,6 +690,7 @@ void main() {
         MamoApp(
           dataSource: ds,
           startClock: false,
+          initialMode: MamoAppMode.municipality,
         ),
       );
       await tester.pumpAndSettle();
@@ -757,7 +760,13 @@ void main() {
       setTestViewport(tester, const Size(760, 800));
 
       final ds = FakeRescueDataSource();
-      await tester.pumpWidget(MamoApp(dataSource: ds, startClock: false));
+      await tester.pumpWidget(
+        MamoApp(
+          dataSource: ds,
+          startClock: false,
+          initialMode: MamoAppMode.municipality,
+        ),
+      );
       await tester.pumpAndSettle();
 
       expect(find.byIcon(Icons.menu), findsNothing);
@@ -773,7 +782,13 @@ void main() {
       setTestViewport(tester, const Size(400, 800));
 
       final ds = FakeRescueDataSource();
-      await tester.pumpWidget(MamoApp(dataSource: ds, startClock: false));
+      await tester.pumpWidget(
+        MamoApp(
+          dataSource: ds,
+          startClock: false,
+          initialMode: MamoAppMode.municipality,
+        ),
+      );
       await tester.pumpAndSettle();
 
       // モバイル時は常設サイドバーがなくメニューボタンが表示される
@@ -839,7 +854,13 @@ void main() {
           },
         ],
       );
-      await tester.pumpWidget(MamoApp(dataSource: ds, startClock: false));
+      await tester.pumpWidget(
+        MamoApp(
+          dataSource: ds,
+          startClock: false,
+          initialMode: MamoAppMode.municipality,
+        ),
+      );
       await tester.pumpAndSettle();
 
       await tester.tap(find.byIcon(Icons.notifications));
@@ -964,7 +985,13 @@ void main() {
       tester.view.physicalSize = const Size(400, 800);
 
       final ds = FakeRescueDataSource();
-      await tester.pumpWidget(MamoApp(dataSource: ds, startClock: false));
+      await tester.pumpWidget(
+        MamoApp(
+          dataSource: ds,
+          startClock: false,
+          initialMode: MamoAppMode.municipality,
+        ),
+      );
       await tester.pumpAndSettle();
 
       // モバイルで Drawer を開く
@@ -991,7 +1018,13 @@ void main() {
       setTestViewport(tester, const Size(700, 800));
 
       final ds = FakeRescueDataSource();
-      await tester.pumpWidget(MamoApp(dataSource: ds, startClock: false));
+      await tester.pumpWidget(
+        MamoApp(
+          dataSource: ds,
+          startClock: false,
+          initialMode: MamoAppMode.municipality,
+        ),
+      );
       await tester.pumpAndSettle();
 
       expect(tester.widget<AppSidebar>(find.byType(AppSidebar)).width, 180.0);
@@ -1067,7 +1100,13 @@ void main() {
       setTestViewport(tester, const Size(1280, 800));
 
       final ds = FakeRescueDataSource();
-      await tester.pumpWidget(MamoApp(dataSource: ds, startClock: false));
+      await tester.pumpWidget(
+        MamoApp(
+          dataSource: ds,
+          startClock: false,
+          initialMode: MamoAppMode.municipality,
+        ),
+      );
       await tester.pumpAndSettle();
 
       expect(find.byType(DashboardView), findsOneWidget);
@@ -1151,7 +1190,13 @@ void main() {
         ],
       );
 
-      await tester.pumpWidget(MamoApp(dataSource: ds, startClock: false));
+      await tester.pumpWidget(
+        MamoApp(
+          dataSource: ds,
+          startClock: false,
+          initialMode: MamoAppMode.municipality,
+        ),
+      );
       await tester.pumpAndSettle();
 
       await tester.tap(
@@ -1189,6 +1234,41 @@ void main() {
 
       expect(selectedListItems(), findsOneWidget);
       expect(find.text('ID：mamo-0004'), findsOneWidget);
+    });
+
+    testWidgets('starts on PortalPage by default and switches between Citizen and Municipality modes', (
+      tester,
+    ) async {
+      setTestViewport(tester, const Size(1280, 800));
+
+      final ds = FakeRescueDataSource();
+      await tester.pumpWidget(MamoApp(dataSource: ds, startClock: false));
+      await tester.pumpAndSettle();
+
+      // デフォルト起動はポータル
+      expect(find.byType(DashboardView), findsNothing);
+      expect(find.textContaining('利用者'), findsWidgets);
+      expect(find.textContaining('自治体'), findsWidgets);
+
+      // 自治体モードへ遷移
+      await tester.tap(find.text('自治体モードを開く'));
+      await tester.pumpAndSettle();
+      expect(find.byType(DashboardView), findsOneWidget);
+
+      // ヘッダーから利用者モードへ切替
+      await tester.tap(
+        find.descendant(
+          of: find.byType(AppHeader),
+          matching: find.text('利用者'),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(find.text('ゲストモードではじめる'), findsOneWidget);
+
+      // ポータルへ復帰
+      await tester.tap(find.text('ポータル'));
+      await tester.pumpAndSettle();
+      expect(find.text('自治体モードを開く'), findsOneWidget);
     });
   });
 }
