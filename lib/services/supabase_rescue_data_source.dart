@@ -174,6 +174,28 @@ class SupabaseRescueDataSource implements RescueDataSource {
         .eq('id', matchId);
   }
 
+  @override
+  Future<Map<String, dynamic>?> insertRequest(
+    Map<String, dynamic> payload,
+  ) async {
+    final client = _resolveClient();
+    if (client == null) return null;
+
+    try {
+      final row = await client
+          .from(_tableName)
+          .insert(payload)
+          .select()
+          .maybeSingle()
+          .abortSignal(_disposeCompleter.future);
+      if (row == null) return null;
+      return Map<String, dynamic>.from(row);
+    } catch (e) {
+      debugPrint('MAMO救助要請送信エラー: $e');
+      return null;
+    }
+  }
+
   Future<void> _cleanupChannel() {
     final channel = _channel;
     final controller = _realtimeController;
