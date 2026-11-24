@@ -23,6 +23,7 @@ class SupabaseRescueDataSource implements RescueDataSource {
   SupabaseClient? _ownedClient;
   RealtimeChannel? _channel;
   StreamController<RescueRealtimeEvent>? _realtimeController;
+  final Completer<void> _disposeCompleter = Completer<void>();
   bool _disposed = false;
 
   SupabaseClient? _resolveClient() {
@@ -32,7 +33,16 @@ class SupabaseRescueDataSource implements RescueDataSource {
       debugPrint('Supabase設定がありません');
       return null;
     }
-    return _ownedClient ??= SupabaseClient(config.url, config.publishableKey);
+    return _ownedClient ??= SupabaseClient(
+      config.url,
+      config.publishableKey,
+      authOptions: const AuthClientOptions(autoRefreshToken: false),
+      postgrestOptions: const PostgrestClientOptions(retryEnabled: false),
+      realtimeClientOptions: const RealtimeClientOptions(
+        connectionCloseTimeout: Duration.zero,
+        disconnectOnEmptyChannelsAfter: Duration.zero,
+      ),
+    );
   }
 
   @override
@@ -46,7 +56,8 @@ class SupabaseRescueDataSource implements RescueDataSource {
         .from(_tableName)
         .select('*')
         .order('created_at', ascending: false)
-        .limit(limit);
+        .limit(limit)
+        .abortSignal(_disposeCompleter.future);
 
     return rows
         .map<Map<String, dynamic>>(
@@ -183,9 +194,45 @@ class SupabaseRescueDataSource implements RescueDataSource {
   Future<void> dispose() async {
     if (_disposed) return;
     _disposed = true;
-    await _cleanupChannel();
+    if (!_disposeCompleter.isCompleted) {
+      _disposeCompleter.complete();
+    }
+
+    final channel = _channel;
+    final controller = _realtimeController;
+    _channel = null;
+    _realtimeController = null;
+    if (controller != null && !controller.isClosed) {
+      unawaited(controller.close());
+    }
+
     final owned = _ownedClient;
     _ownedClient = null;
+    if (owned != null) {
+      final realtime = owned.realtime;
+      final conn = realtime.conn;
+      realtime.connState = SocketStates.disconnected;
+      realtime.conn = null;
+      realtime.reconnectTimer.reset();
+      realtime.heartbeatTimer?.cancel();
+      if (conn != null) {
+        unawaited(conn.sink.close().catchError((Object _) {}));
+      }
+    }
+
+    if (channel != null) {
+      try {
+        final injected = _injectedClient;
+        if (injected != null) {
+          await injected.removeChannel(channel);
+        } else {
+          await channel.unsubscribe(Duration.zero);
+        }
+      } catch (e) {
+        debugPrint('MAMO realtime channel cleanup error: $e');
+      }
+    }
+
     if (owned != null) {
       try {
         await owned.dispose();
