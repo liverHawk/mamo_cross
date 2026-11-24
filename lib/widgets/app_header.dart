@@ -1,5 +1,6 @@
 import 'package:material_ui/material_ui.dart';
 
+import '../models/app_mode.dart';
 import '../models/rescue_request.dart';
 import '../state/rescue_store.dart';
 import '../theme/mamo_theme.dart';
@@ -11,11 +12,13 @@ class AppHeader extends StatelessWidget {
     required this.store,
     required this.isMobile,
     this.onMenuTap,
+    this.onSelectMode,
   });
 
   final RescueStore store;
   final bool isMobile;
   final VoidCallback? onMenuTap;
+  final ValueChanged<MamoAppMode>? onSelectMode;
 
   @override
   Widget build(BuildContext context) {
@@ -67,6 +70,18 @@ class AppHeader extends StatelessWidget {
             ),
           ],
           const Spacer(),
+          if (onSelectMode != null && !isMobile) ...[
+            _HeaderModeButton(
+              label: 'ポータル',
+              onTap: () => onSelectMode!(MamoAppMode.portal),
+            ),
+            const SizedBox(width: 6),
+            _HeaderModeButton(
+              label: '利用者',
+              onTap: () => onSelectMode!(MamoAppMode.citizen),
+            ),
+            const SizedBox(width: 14),
+          ],
           _BellButton(
             count: store.newCount,
             onTap: () {
@@ -76,13 +91,16 @@ class AppHeader extends StatelessWidget {
             },
           ),
           if (showMunicipality) ...[
-            const SizedBox(width: 24),
-            Text(
-              '${store.municipalityName} ▾',
-              style: const TextStyle(color: Colors.white, fontSize: 14),
+            const SizedBox(width: 20),
+            Flexible(
+              child: Text(
+                '${store.municipalityName} ▾',
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(color: Colors.white, fontSize: 14),
+              ),
             ),
           ],
-          const SizedBox(width: 20),
+          const SizedBox(width: 16),
           InkWell(
             onTap: () => _showHelpDialog(context),
             borderRadius: BorderRadius.circular(12),
@@ -120,6 +138,41 @@ class AppHeader extends StatelessWidget {
             child: const Text('閉じる'),
           ),
         ],
+      ),
+    );
+  }
+}
+
+class _HeaderModeButton extends StatelessWidget {
+  const _HeaderModeButton({
+    required this.label,
+    required this.onTap,
+  });
+
+  final String label;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return OutlinedButton(
+      onPressed: onTap,
+      style: OutlinedButton.styleFrom(
+        foregroundColor: Colors.white,
+        backgroundColor: Colors.white.withValues(alpha: 0.12),
+        side: BorderSide(color: Colors.white.withValues(alpha: 0.45)),
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+        minimumSize: Size.zero,
+        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(8),
+        ),
+      ),
+      child: Text(
+        label,
+        style: const TextStyle(
+          fontSize: 12.5,
+          fontWeight: FontWeight.w700,
+        ),
       ),
     );
   }
