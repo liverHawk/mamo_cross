@@ -205,17 +205,17 @@ void main() {
   });
 
   group('RescueStore local and FakeRescueDataSource sync', () {
-    test('keeps pure local 5 requests when dataSource is null', () {
+    test('starts empty with Yamaguchi Prefecture municipality when dataSource is null', () {
       final store = RescueStore(startClock: false);
       addTearDown(store.dispose);
 
-      expect(store.requests.length, 5);
-      expect(store.requests.first.id, 'mamo-0005');
-      expect(store.requests.last.id, 'mamo-0001');
-      expect(store.selectedId, 'mamo-0005');
-      expect(store.newCount, 3);
-      expect(store.workingCount, 2);
+      expect(store.requests, isEmpty);
+      expect(store.selectedId, '');
+      expect(store.selectedRequest, isNull);
+      expect(store.newCount, 0);
+      expect(store.workingCount, 0);
       expect(store.doneCount, 0);
+      expect(store.municipalityName, '山口県 災害対策本部');
       expect(store.isRealtimeConnected, isFalse);
     });
 
@@ -257,12 +257,10 @@ void main() {
 
       expect(ds.fetchLimits, [50]);
       expect(store.isRealtimeConnected, isTrue);
-      expect(store.requests.length, 7);
-      // rows.reversed を先頭挿入するため最新(102)が先頭、重複101はスキップ、末尾にローカル5件
+      expect(store.requests.length, 2);
+      // rows.reversed を先頭挿入するため最新(102)が先頭、重複101はスキップされる
       expect(store.requests[0].id, 'MAMO-102');
       expect(store.requests[1].dbId, '101');
-      expect(store.requests[2].id, 'mamo-0005');
-      expect(store.requests.last.id, 'mamo-0001');
       expect(store.selectedId, 'MAMO-102');
       expect(alerts, isEmpty);
     });
@@ -317,7 +315,7 @@ void main() {
       expect(alerts.length, 1);
     });
 
-    test('handles Realtime UPDATE for matching dbId without touching local items', () async {
+    test('handles Realtime UPDATE for matching dbId without touching other items', () async {
       final ds = FakeRescueDataSource(
         initialRows: [
           {
@@ -325,6 +323,12 @@ void main() {
             'request_id': 'MAMO-300',
             'requester_name': '更新対象',
             'location_text': '山口市吉敷',
+            'status': '未対応',
+          },
+          {
+            'id': 301,
+            'request_id': 'MAMO-301',
+            'requester_name': '無関係さん',
             'status': '未対応',
           },
         ],
@@ -343,7 +347,7 @@ void main() {
       expect(updated.name, '更新対象');
       expect(updated.location, '山口市吉敷');
       expect(
-        store.requests.firstWhere((r) => r.id == 'mamo-0005').status,
+        store.requests.firstWhere((r) => r.dbId == '301').status,
         RequestStatus.pending,
       );
     });
@@ -363,13 +367,14 @@ void main() {
       addTearDown(store.dispose);
       await store.initializeRealtime();
 
-      // ローカル初期項目は dbId == null なので updateStatus を呼ばない
-      await store.changeStatus('mamo-0005', RequestStatus.working);
+      // dbId == null の項目はローカル更新のみで updateStatus を呼ばない
+      store.addDbRequest({'request_id': 'LOCAL-1', 'status': '未対応'});
+      await store.changeStatus('LOCAL-1', RequestStatus.working);
       expect(
-        store.requests.firstWhere((r) => r.id == 'mamo-0005').status,
+        store.requests.firstWhere((r) => r.id == 'LOCAL-1').status,
         RequestStatus.working,
       );
-      expect(store.selectedId, 'mamo-0005');
+      expect(store.selectedId, 'LOCAL-1');
       expect(ds.updateCalls, isEmpty);
 
       // DB 由来項目はローカル即時反映＋ updateStatus 呼び出し
@@ -396,8 +401,9 @@ void main() {
       await store.initializeRealtime();
       await pumpEventQueue();
 
-      // ローカル5件で稼働継続しクラッシュしない
-      expect(store.requests.length, 5);
+      // 取得失敗時は空状態のままクラッシュしない
+      expect(store.requests, isEmpty);
+      expect(store.selectedRequest, isNull);
       expect(store.isRealtimeConnected, isFalse);
 
       // updateError でもローカル状態は維持
@@ -510,19 +516,7 @@ void main() {
       );
     });
 
-    test('uses real Yamaguchi Prefecture addresses and municipality name by default', () {
-      final store = RescueStore(startClock: false);
-      addTearDown(store.dispose);
-
-      expect(store.municipalityName, '山口県 災害対策本部');
-      expect(store.requests.length, 5);
-      for (final req in store.requests) {
-        expect(req.location, contains('山口県'));
-        expect(req.location, isNot(contains('○○')));
-      }
-    });
-
-    test('replaces matching local initial requests on DB sync without duplicating ids', () async {
+    test('loads DB requests cleanly without local fallback and updates status by dbId', () async {
       final ds = FakeRescueDataSource(
         initialRows: [
           {
@@ -589,10 +583,6 @@ void main() {
       );
       addTearDown(store.dispose);
 
-      final localSnapshot = {
-        for (final r in store.requests) r.id: r,
-      };
-
       await store.initializeRealtime();
 
       expect(store.requests.length, 5);
@@ -603,12 +593,9 @@ void main() {
       expect(store.selectedId, 'mamo-0005');
 
       for (final req in store.requests) {
-        final local = localSnapshot[req.id]!;
         expect(req.dbId, isNotNull);
-        expect(req.latPercent, local.latPercent);
-        expect(req.topPercent, local.topPercent);
-        expect(req.age, local.age);
-        expect(req.gender, local.gender);
+        expect(req.location, contains('山口県'));
+        expect(req.location, isNot(contains('○○')));
       }
 
       await store.changeStatus('mamo-0005', RequestStatus.working);
@@ -675,6 +662,17 @@ void main() {
             'distance_text': '約150m先',
             'rescue_details': '転倒による負傷',
             'considerations': '配慮なし',
+            'status': '未対応',
+          },
+          {
+            'id': 12,
+            'request_id': 'MAMO-12',
+            'requester_name': '佐藤 花子',
+            'request_type': '消防',
+            'location_text': '山口県下関市南部町1-1付近',
+            'distance_text': '約550m先',
+            'rescue_details': '建物内に取り残されています。',
+            'considerations': '医療的ケアが必要',
             'status': '未対応',
           },
         ],
@@ -815,7 +813,26 @@ void main() {
     ) async {
       setTestViewport(tester, const Size(1280, 800));
 
-      final ds = FakeRescueDataSource();
+      final ds = FakeRescueDataSource(
+        initialRows: [
+          {
+            'id': 1,
+            'request_id': 'mamo-0005',
+            'user_name': '山田 太郎',
+            'request_type': '救急',
+            'location': '山口県山口市亀山町2-1付近',
+            'status': '未対応',
+          },
+          {
+            'id': 4,
+            'request_id': 'mamo-0002',
+            'user_name': '田中 美咲',
+            'request_type': '警察',
+            'location': '山口県宇部市常盤町1-7-1付近',
+            'status': '対応中',
+          },
+        ],
+      );
       await tester.pumpWidget(MamoApp(dataSource: ds, startClock: false));
       await tester.pumpAndSettle();
 
@@ -1038,7 +1055,32 @@ void main() {
       await tester.pumpWidget(const SizedBox.shrink());
     });
 
-    testWidgets('RequestsView highlights exactly one item when DB returns matching initial request_ids', (
+    testWidgets('renders empty state cleanly on DashboardView and RequestsView when no requests exist', (
+      tester,
+    ) async {
+      setTestViewport(tester, const Size(1280, 800));
+
+      final ds = FakeRescueDataSource();
+      await tester.pumpWidget(MamoApp(dataSource: ds, startClock: false));
+      await tester.pumpAndSettle();
+
+      expect(find.byType(DashboardView), findsOneWidget);
+      expect(find.text('受信した救助要請はありません。'), findsOneWidget);
+
+      await tester.tap(
+        find.descendant(
+          of: find.byType(AppSidebar),
+          matching: find.text('救助要請一覧'),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.byType(RequestsView), findsOneWidget);
+      expect(find.text('すべて 0'), findsOneWidget);
+      expect(find.text('該当する救助要請はありません。'), findsOneWidget);
+    });
+
+    testWidgets('RequestsView highlights exactly one item when DB loads requests and another is tapped', (
       tester,
     ) async {
       setTestViewport(tester, const Size(1280, 800));
