@@ -72,6 +72,7 @@ class _MockCitizenDataSource implements CitizenDataSource {
   final List<String> joinedCodes = [];
 
   Object? upsertProfileError;
+  Future<void> Function(CitizenRegistrationProfile profile)? onUpsertProfile;
   Object? updateSafetyError;
   Object? sendMessageError;
   bool returnNullOnSendMessage = false;
@@ -108,6 +109,9 @@ class _MockCitizenDataSource implements CitizenDataSource {
     required CitizenSafetyStatus safetyStatus,
     String locationNote = '〇〇地区付近',
   }) async {
+    if (onUpsertProfile != null) {
+      await onUpsertProfile!(profile);
+    }
     if (upsertProfileError != null) {
       throw upsertProfileError!;
     }
@@ -596,6 +600,154 @@ void main() {
         '家族グループへの参加に失敗しました（通信状況をご確認ください）',
       );
     });
+
+    test(
+      'updateMySafety rolls back to last synced status rather than skipped intermediate status on rapid taps',
+      () async {
+        final auth = _MockAuthService();
+        final ds = _MockCitizenDataSource();
+        final store = CitizenStore(
+          dataSource: ds,
+          authService: auth,
+          autoInitialize: false,
+        );
+        addTearDown(store.dispose);
+
+        // 初期確定状態 safe から、DB 失敗中に damaged -> rescueNeeded を連打
+        ds.updateSafetyError = StateError('network error');
+        store.updateMySafety(CitizenSafetyStatus.damaged);
+        store.updateMySafety(CitizenSafetyStatus.rescueNeeded);
+        await Future<void>.delayed(const Duration(milliseconds: 30));
+
+        expect(store.mySafety, CitizenSafetyStatus.safe);
+        expect(
+          store.familyMembers.firstWhere((m) => m.isSelf).status,
+          CitizenSafetyStatus.safe,
+        );
+        expect(store.toastMessage, '安否ステータスの更新に失敗しました');
+
+        // 1回目 damaged が成功確定した後の連打失敗では、確定済み damaged に戻る
+        ds.updateSafetyError = null;
+        store.updateMySafety(CitizenSafetyStatus.damaged);
+        await Future<void>.delayed(const Duration(milliseconds: 20));
+        expect(store.mySafety, CitizenSafetyStatus.damaged);
+
+        ds.updateSafetyError = StateError('network error');
+        store.updateMySafety(CitizenSafetyStatus.rescueNeeded);
+        store.updateMySafety(CitizenSafetyStatus.safe);
+        await Future<void>.delayed(const Duration(milliseconds: 30));
+
+        expect(store.mySafety, CitizenSafetyStatus.damaged);
+        expect(
+          store.familyMembers.firstWhere((m) => m.isSelf).status,
+          CitizenSafetyStatus.damaged,
+        );
+      },
+    );
+
+    test(
+      'saveProfileEdits preserves snapshot per request and avoids stale rollback overwriting newer edits',
+      () async {
+        final auth = _MockAuthService();
+        final ds = _MockCitizenDataSource();
+        final store = CitizenStore(
+          dataSource: ds,
+          authService: auth,
+          autoInitialize: false,
+        );
+        addTearDown(store.dispose);
+
+        store.updateBasicInfo(name: '初期太郎');
+        store.completeRegistration();
+        await Future<void>.delayed(const Duration(milliseconds: 20));
+
+        // 1) f1 (失敗) + f2 (成功) の並列実行 → f2 が DB・store 双方に残る
+        final upsertedNames = <String>[];
+        ds.onUpsertProfile = (profile) async {
+          if (profile.name == '名前1') {
+            throw StateError('first edit failed');
+          }
+          upsertedNames.add(profile.name);
+        };
+
+        final f1 = store.saveProfileEdits(name: '名前1');
+        final f2 = store.saveProfileEdits(name: '名前2');
+        final results = await Future.wait([f1, f2]);
+
+        expect(results, [false, true]);
+        expect(upsertedNames, ['名前2']);
+        expect(ds.storedProfile?.profile.name, '名前2');
+        expect(store.profile.name, '名前2');
+        expect(store.toastMessage, '登録情報を保存しました');
+
+        // 2) f3 (成功) + f4 (失敗) の並列実行 → f3 が確定した値 '名前3' へ戻る
+        ds.onUpsertProfile = (profile) async {
+          if (profile.name == '名前4') {
+            throw StateError('second edit failed');
+          }
+        };
+        final f3 = store.saveProfileEdits(name: '名前3');
+        final f4 = store.saveProfileEdits(name: '名前4');
+        final results2 = await Future.wait([f3, f4]);
+
+        expect(results2, [true, false]);
+        expect(ds.storedProfile?.profile.name, '名前3');
+        expect(store.profile.name, '名前3');
+        expect(store.toastMessage, '登録情報の保存に失敗しました');
+      },
+    );
+
+    test(
+      'logout and resetDemo notify listeners when async message resubscription updates messages',
+      () async {
+        final auth = _MockAuthService();
+        final ds = _MockCitizenDataSource();
+        final store = CitizenStore(
+          dataSource: ds,
+          authService: auth,
+          autoInitialize: false,
+        );
+        addTearDown(store.dispose);
+
+        store.completeRegistration();
+        await Future<void>.delayed(const Duration(milliseconds: 20));
+
+        var notifyCountAfterLogout = 0;
+        var listening = false;
+        store.addListener(() {
+          if (listening) {
+            notifyCountAfterLogout++;
+          }
+        });
+
+        auth.signOutCompleter = Completer<void>();
+        store.logout();
+        // logout 直後は同期的にデモメッセージ 5 件へリセットされている
+        expect(store.messages, hasLength(5));
+
+        listening = true;
+        auth.signOutCompleter!.complete();
+        await Future<void>.delayed(const Duration(milliseconds: 30));
+
+        expect(notifyCountAfterLogout, greaterThan(0));
+        expect(store.messages, hasLength(1));
+        expect(store.messages.single.id, 'notice-db-1');
+
+        // resetDemo でも同様に非同期再購読後に通知・更新される
+        listening = false;
+        auth.signOutCompleter = Completer<void>();
+        store.resetDemo();
+        expect(store.messages, hasLength(5));
+        notifyCountAfterLogout = 0;
+        listening = true;
+        auth.signOutCompleter!.complete();
+        await Future<void>.delayed(const Duration(milliseconds: 30));
+
+        expect(notifyCountAfterLogout, greaterThan(0));
+        expect(store.messages, hasLength(1));
+        expect(store.messages.single.id, 'notice-db-1');
+      },
+    );
   });
 
   group('RescueStore.applyRemoteUpdate', () {

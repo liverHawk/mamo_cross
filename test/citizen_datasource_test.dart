@@ -778,5 +778,75 @@ void main() {
         expect(emittedUserIds, containsAllInOrder(['anon-user-1', null]));
       },
     );
+
+    test(
+      'ensureAnonymousSession waits for in-flight signOut before creating a new session',
+      () async {
+        final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+        addTearDown(server.close);
+
+        var signupCount = 0;
+        var logoutCount = 0;
+        final logoutStarted = Completer<void>();
+        final releaseLogout = Completer<void>();
+
+        server.listen((HttpRequest req) async {
+          await utf8.decoder.bind(req).drain<void>();
+          if (req.method == 'POST' && req.uri.path == '/auth/v1/signup') {
+            signupCount++;
+            req.response
+              ..statusCode = HttpStatus.ok
+              ..headers.contentType = ContentType.json
+              ..write(jsonEncode(_fakeAuthSessionPayload('anon-user-$signupCount')));
+            await req.response.close();
+            return;
+          }
+          if (req.method == 'POST' && req.uri.path == '/auth/v1/logout') {
+            logoutCount++;
+            if (!logoutStarted.isCompleted) {
+              logoutStarted.complete();
+              await releaseLogout.future;
+            }
+            req.response.statusCode = HttpStatus.noContent;
+            await req.response.close();
+            return;
+          }
+          req.response.statusCode = HttpStatus.notFound;
+          await req.response.close();
+        });
+
+        final client = SupabaseClient(
+          'http://127.0.0.1:${server.port}',
+          SupabaseConfig.exhibition.publishableKey,
+          authOptions: const AuthClientOptions(autoRefreshToken: false),
+        );
+        addTearDown(client.dispose);
+
+        final authService = SupabaseAuthService(clientResolver: () => client);
+        addTearDown(authService.dispose);
+
+        final firstUid = await authService.ensureAnonymousSession();
+        expect(firstUid, 'anon-user-1');
+        expect(signupCount, 1);
+
+        // signOut() 開始（/auth/v1/logout 応答待ちで停止）
+        final signOutFuture = authService.signOut();
+        await logoutStarted.future.timeout(const Duration(seconds: 5));
+
+        // signOut 完了前に ensureAnonymousSession() を直接呼んでも、signup はまだ走らない
+        final secondFuture = authService.ensureAnonymousSession();
+        await pumpEventQueue(times: 20);
+        expect(signupCount, 1);
+
+        releaseLogout.complete();
+        await signOutFuture;
+        final secondUid = await secondFuture;
+
+        expect(logoutCount, 1);
+        expect(signupCount, 2);
+        expect(secondUid, 'anon-user-2');
+        expect(authService.currentUserId, 'anon-user-2');
+      },
+    );
   });
 }
