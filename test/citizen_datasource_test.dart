@@ -848,5 +848,319 @@ void main() {
         expect(authService.currentUserId, 'anon-user-2');
       },
     );
+
+    test(
+      'signOut handles null client without LateInitializationError and does not block subsequent ensureAnonymousSession',
+      () async {
+        final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+        addTearDown(server.close);
+
+        server.listen((HttpRequest req) async {
+          await utf8.decoder.bind(req).drain<void>();
+          if (req.method == 'POST' && req.uri.path == '/auth/v1/signup') {
+            req.response
+              ..statusCode = HttpStatus.ok
+              ..headers.contentType = ContentType.json
+              ..write(jsonEncode(_fakeAuthSessionPayload('anon-user-after-null')));
+            await req.response.close();
+            return;
+          }
+          req.response.statusCode = HttpStatus.notFound;
+          await req.response.close();
+        });
+
+        final loopbackClient = SupabaseClient(
+          'http://127.0.0.1:${server.port}',
+          SupabaseConfig.exhibition.publishableKey,
+          authOptions: const AuthClientOptions(autoRefreshToken: false),
+        );
+        addTearDown(loopbackClient.dispose);
+
+        SupabaseClient? activeClient;
+        final authService = SupabaseAuthService(
+          clientResolver: () => activeClient,
+        );
+        addTearDown(authService.dispose);
+
+        // client == null 時の単発・連続 signOut が LateInitializationError なく完了すること
+        await expectLater(
+          authService.signOut().timeout(const Duration(seconds: 2)),
+          completes,
+        );
+        await expectLater(
+          Future.wait([
+            authService.signOut(),
+            authService.signOut(),
+          ]).timeout(const Duration(seconds: 2)),
+          completes,
+        );
+
+        // client == null のまま ensureAnonymousSession() は null を返すこと
+        final uidWhileNull = await authService
+            .ensureAnonymousSession()
+            .timeout(const Duration(seconds: 2));
+        expect(uidWhileNull, isNull);
+
+        // 後から有効な client を設定しても _inFlightSignOut 残留でハングせず成功すること
+        activeClient = loopbackClient;
+        final uidAfter = await authService
+            .ensureAnonymousSession()
+            .timeout(const Duration(seconds: 2));
+        expect(uidAfter, 'anon-user-after-null');
+      },
+    );
+
+    test(
+      'signOut after dispose completes cleanly without network calls and subsequent ensureAnonymousSession returns null',
+      () async {
+        final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+        addTearDown(server.close);
+
+        var signupCount = 0;
+        var logoutCount = 0;
+        server.listen((HttpRequest req) async {
+          await utf8.decoder.bind(req).drain<void>();
+          if (req.method == 'POST' && req.uri.path == '/auth/v1/signup') {
+            signupCount++;
+            req.response
+              ..statusCode = HttpStatus.ok
+              ..headers.contentType = ContentType.json
+              ..write(jsonEncode(_fakeAuthSessionPayload('anon-user-$signupCount')));
+            await req.response.close();
+            return;
+          }
+          if (req.method == 'POST' && req.uri.path == '/auth/v1/logout') {
+            logoutCount++;
+            req.response.statusCode = HttpStatus.noContent;
+            await req.response.close();
+            return;
+          }
+          req.response.statusCode = HttpStatus.notFound;
+          await req.response.close();
+        });
+
+        final client = SupabaseClient(
+          'http://127.0.0.1:${server.port}',
+          SupabaseConfig.exhibition.publishableKey,
+          authOptions: const AuthClientOptions(autoRefreshToken: false),
+        );
+        addTearDown(client.dispose);
+
+        final authService = SupabaseAuthService(clientResolver: () => client);
+        addTearDown(authService.dispose);
+
+        final uid = await authService.ensureAnonymousSession();
+        expect(uid, 'anon-user-1');
+        expect(signupCount, 1);
+
+        authService.dispose();
+
+        await expectLater(
+          authService.signOut().timeout(const Duration(seconds: 2)),
+          completes,
+        );
+        await expectLater(
+          authService.signOut().timeout(const Duration(seconds: 2)),
+          completes,
+        );
+        final uidAfterDispose = await authService
+            .ensureAnonymousSession()
+            .timeout(const Duration(seconds: 2));
+        expect(uidAfterDispose, isNull);
+        expect(logoutCount, 0);
+        expect(signupCount, 1);
+      },
+    );
+
+    test(
+      'concurrent signOut calls serialize cleanly and allow subsequent ensureAnonymousSession',
+      () async {
+        final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+        addTearDown(server.close);
+
+        var signupCount = 0;
+        final logoutStarted = Completer<void>();
+        final releaseLogout = Completer<void>();
+        server.listen((HttpRequest req) async {
+          await utf8.decoder.bind(req).drain<void>();
+          if (req.method == 'POST' && req.uri.path == '/auth/v1/signup') {
+            signupCount++;
+            req.response
+              ..statusCode = HttpStatus.ok
+              ..headers.contentType = ContentType.json
+              ..write(jsonEncode(_fakeAuthSessionPayload('anon-user-$signupCount')));
+            await req.response.close();
+            return;
+          }
+          if (req.method == 'POST' && req.uri.path == '/auth/v1/logout') {
+            if (!logoutStarted.isCompleted) {
+              logoutStarted.complete();
+              await releaseLogout.future;
+            }
+            req.response.statusCode = HttpStatus.noContent;
+            await req.response.close();
+            return;
+          }
+          req.response.statusCode = HttpStatus.notFound;
+          await req.response.close();
+        });
+
+        final client = SupabaseClient(
+          'http://127.0.0.1:${server.port}',
+          SupabaseConfig.exhibition.publishableKey,
+          authOptions: const AuthClientOptions(autoRefreshToken: false),
+        );
+        addTearDown(client.dispose);
+
+        final authService = SupabaseAuthService(clientResolver: () => client);
+        addTearDown(authService.dispose);
+
+        expect(await authService.ensureAnonymousSession(), 'anon-user-1');
+
+        final s1 = authService.signOut();
+        await logoutStarted.future.timeout(const Duration(seconds: 5));
+        final s2 = authService.signOut();
+
+        releaseLogout.complete();
+        await Future.wait([s1, s2]).timeout(const Duration(seconds: 5));
+
+        final nextUid = await authService
+            .ensureAnonymousSession()
+            .timeout(const Duration(seconds: 2));
+        expect(nextUid, 'anon-user-2');
+      },
+    );
+
+    test(
+      'clientResolver synchronous exception does not cause LateInitializationError and recovers cleanly',
+      () async {
+        final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+        addTearDown(server.close);
+
+        var signupCount = 0;
+        server.listen((HttpRequest req) async {
+          await utf8.decoder.bind(req).drain<void>();
+          if (req.method == 'POST' && req.uri.path == '/auth/v1/signup') {
+            signupCount++;
+            req.response
+              ..statusCode = HttpStatus.ok
+              ..headers.contentType = ContentType.json
+              ..write(jsonEncode(_fakeAuthSessionPayload('anon-user-$signupCount')));
+            await req.response.close();
+            return;
+          }
+          if (req.method == 'POST' && req.uri.path == '/auth/v1/logout') {
+            req.response.statusCode = HttpStatus.noContent;
+            await req.response.close();
+            return;
+          }
+          req.response.statusCode = HttpStatus.notFound;
+          await req.response.close();
+        });
+
+        final client = SupabaseClient(
+          'http://127.0.0.1:${server.port}',
+          SupabaseConfig.exhibition.publishableKey,
+          authOptions: const AuthClientOptions(autoRefreshToken: false),
+        );
+        addTearDown(client.dispose);
+
+        var shouldThrow = true;
+        final authService = SupabaseAuthService(
+          clientResolver: () {
+            if (shouldThrow) {
+              throw StateError('boom');
+            }
+            return client;
+          },
+        );
+        addTearDown(authService.dispose);
+
+        await expectLater(
+          authService.signOut().timeout(const Duration(seconds: 2)),
+          completes,
+        );
+        await expectLater(
+          Future.wait([
+            authService.signOut(),
+            authService.signOut(),
+          ]).timeout(const Duration(seconds: 2)),
+          completes,
+        );
+        expect(
+          await authService
+              .ensureAnonymousSession()
+              .timeout(const Duration(seconds: 2)),
+          isNull,
+        );
+
+        shouldThrow = false;
+        expect(
+          await authService
+              .ensureAnonymousSession()
+              .timeout(const Duration(seconds: 2)),
+          'anon-user-1',
+        );
+        await expectLater(
+          authService.signOut().timeout(const Duration(seconds: 2)),
+          completes,
+        );
+        expect(authService.currentUserId, isNull);
+      },
+    );
+
+    test(
+      'signOut and dispose during in-flight ensureAnonymousSession complete without hanging',
+      () async {
+        final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+        addTearDown(server.close);
+
+        final signupStarted = Completer<void>();
+        final releaseSignup = Completer<void>();
+        server.listen((HttpRequest req) async {
+          await utf8.decoder.bind(req).drain<void>();
+          if (req.method == 'POST' && req.uri.path == '/auth/v1/signup') {
+            if (!signupStarted.isCompleted) {
+              signupStarted.complete();
+              await releaseSignup.future;
+            }
+            req.response
+              ..statusCode = HttpStatus.ok
+              ..headers.contentType = ContentType.json
+              ..write(jsonEncode(_fakeAuthSessionPayload('anon-user-1')));
+            await req.response.close();
+            return;
+          }
+          req.response.statusCode = HttpStatus.notFound;
+          await req.response.close();
+        });
+
+        final client = SupabaseClient(
+          'http://127.0.0.1:${server.port}',
+          SupabaseConfig.exhibition.publishableKey,
+          authOptions: const AuthClientOptions(autoRefreshToken: false),
+        );
+        addTearDown(client.dispose);
+
+        final authService = SupabaseAuthService(clientResolver: () => client);
+        addTearDown(authService.dispose);
+
+        final signInFuture = authService.ensureAnonymousSession();
+        await signupStarted.future.timeout(const Duration(seconds: 5));
+
+        final signOutFuture = authService.signOut();
+        authService.dispose();
+
+        releaseSignup.complete();
+        expect(
+          await signInFuture.timeout(const Duration(seconds: 5)),
+          isNull,
+        );
+        await expectLater(
+          signOutFuture.timeout(const Duration(seconds: 5)),
+          completes,
+        );
+      },
+    );
   });
 }

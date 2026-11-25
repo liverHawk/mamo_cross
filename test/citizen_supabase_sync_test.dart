@@ -7,6 +7,7 @@ import 'package:mamo_cross/models/citizen_models.dart';
 import 'package:mamo_cross/models/rescue_request.dart';
 import 'package:mamo_cross/services/auth_service.dart';
 import 'package:mamo_cross/services/citizen_data_source.dart';
+import 'package:mamo_cross/services/supabase_citizen_data_source.dart';
 import 'package:mamo_cross/state/citizen_store.dart';
 import 'package:mamo_cross/state/rescue_store.dart';
 import 'package:mamo_cross/views/citizen/citizen_safety_tab.dart';
@@ -746,6 +747,56 @@ void main() {
         expect(notifyCountAfterLogout, greaterThan(0));
         expect(store.messages, hasLength(1));
         expect(store.messages.single.id, 'notice-db-1');
+      },
+    );
+
+    test(
+      'offline CitizenStore (SupabaseConfig.empty + real SupabaseAuthService) logout and resetDemo complete without LateInitializationError',
+      () async {
+        final originalDebugPrint = debugPrint;
+        final loggedMessages = <String>[];
+        debugPrint = (String? message, {int? wrapWidth}) {
+          if (message != null) {
+            loggedMessages.add(message);
+          }
+        };
+        addTearDown(() => debugPrint = originalDebugPrint);
+
+        final ds = SupabaseCitizenDataSource(config: SupabaseConfig.empty);
+        final auth = SupabaseAuthService(clientResolver: () => ds.sharedClient);
+        final store = CitizenStore(
+          dataSource: ds,
+          authService: auth,
+          autoInitialize: false,
+        );
+        addTearDown(store.dispose);
+
+        store.demoLogin(delay: Duration.zero);
+        await pumpEventQueue(times: 20);
+        expect(store.isLoggedIn, isTrue);
+
+        store.logout();
+        await pumpEventQueue(times: 20);
+
+        store.resetDemo();
+        await pumpEventQueue(times: 20);
+
+        expect(store.isLoggedIn, isFalse);
+        expect(store.currentScreen, CitizenScreen.login);
+        expect(
+          loggedMessages.where(
+            (m) =>
+                m.contains('LateInitializationError') ||
+                m.contains('サインアウトエラー'),
+          ),
+          isEmpty,
+        );
+
+        // 再ログインも阻害されずに正常完了すること
+        store.demoLogin(delay: Duration.zero);
+        await pumpEventQueue(times: 20);
+        expect(store.isLoggedIn, isTrue);
+        expect(store.currentScreen, CitizenScreen.home);
       },
     );
   });
