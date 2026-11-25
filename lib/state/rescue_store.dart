@@ -199,7 +199,12 @@ class RescueStore extends ChangeNotifier {
       );
       if (localIndex != -1) {
         final localReq = _requests[localIndex];
-        _requests[localIndex] = localReq.copyWith(dbId: req.dbId);
+        final parsedCoords = RescueRequest.parseCoordinates(row);
+        _requests[localIndex] = localReq.copyWith(
+          dbId: req.dbId,
+          latitude: parsedCoords?.latitude,
+          longitude: parsedCoords?.longitude,
+        );
         notifyListeners();
         final ds = dataSource;
         if (ds != null && localReq.status != req.status) {
@@ -279,6 +284,7 @@ class RescueStore extends ChangeNotifier {
       row['top_percent'],
       existing.topPercent,
     );
+    final nextCoords = RescueRequest.parseCoordinates(row);
 
     _requests[index] = existing.copyWith(
       status: nextStatus,
@@ -290,6 +296,8 @@ class RescueStore extends ChangeNotifier {
       consideration: nextConsideration,
       latPercent: nextLatPercent,
       topPercent: nextTopPercent,
+      latitude: nextCoords?.latitude,
+      longitude: nextCoords?.longitude,
     );
     notifyListeners();
   }
@@ -402,6 +410,8 @@ class RescueStore extends ChangeNotifier {
         distanceText.trim().isEmpty ? '約150m先（デモ）' : distanceText.trim();
 
     final requestId = _nextCitizenRequestId(now);
+    final resolvedCoords =
+        RescueRequest.resolveCoordinatesFromLocation(normalizedLocation);
     final localRequest = RescueRequest(
       id: requestId,
       time: _formatClockTime(now),
@@ -415,6 +425,8 @@ class RescueStore extends ChangeNotifier {
       consideration: normalizedConsiderations,
       latPercent: 50.0,
       topPercent: 50.0,
+      latitude: resolvedCoords.latitude,
+      longitude: resolvedCoords.longitude,
       status: RequestStatus.pending,
     );
 
@@ -467,8 +479,13 @@ class RescueStore extends ChangeNotifier {
     }
 
     final current = _requests[index];
+    final parsedInsertedCoords = RescueRequest.parseCoordinates(insertedRow);
     if (current.dbId == null) {
-      final reconciled = current.copyWith(dbId: insertedDbId);
+      final reconciled = current.copyWith(
+        dbId: insertedDbId,
+        latitude: parsedInsertedCoords?.latitude,
+        longitude: parsedInsertedCoords?.longitude,
+      );
       _requests[index] = reconciled;
       notifyListeners();
       final remoteStatus = insertedRow['status'] != null
@@ -482,6 +499,17 @@ class RescueStore extends ChangeNotifier {
         }
       }
       return reconciled;
+    }
+    if (parsedInsertedCoords != null &&
+        (current.latitude != parsedInsertedCoords.latitude ||
+            current.longitude != parsedInsertedCoords.longitude)) {
+      final updated = current.copyWith(
+        latitude: parsedInsertedCoords.latitude,
+        longitude: parsedInsertedCoords.longitude,
+      );
+      _requests[index] = updated;
+      notifyListeners();
+      return updated;
     }
     return current;
   }

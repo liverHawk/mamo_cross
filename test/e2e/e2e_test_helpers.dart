@@ -713,7 +713,7 @@ Future<void> closeRequestDetailSheetIfOpen(WidgetTester tester) async {
   }
 }
 
-/// `FakeMapView` のマップピンを Tooltip 文言で検索する
+/// `GsiMapView` のマップピンを Tooltip 文言で検索する
 Finder findMapPinTooltip(String requesterName, {String? statusLabel}) {
   return find.byWidgetPredicate((widget) {
     if (widget is! Tooltip) return false;

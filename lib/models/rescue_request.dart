@@ -46,6 +46,35 @@ enum MamoView {
 
 /// 救助要請データモデル
 class RescueRequest {
+  /// デフォルト座標（山口県庁付近）
+  static const double defaultLatitude = 34.1859;
+  static const double defaultLongitude = 131.4706;
+
+  static const Map<String, ({double latitude, double longitude})>
+      _yamaguchiMunicipalityCoordinates = {
+    // 13市
+    '山口市': (latitude: 34.1785, longitude: 131.4737),
+    '下関市': (latitude: 33.9578, longitude: 130.9415),
+    '萩市': (latitude: 34.4081, longitude: 131.3991),
+    '宇部市': (latitude: 33.9516, longitude: 131.2468),
+    '岩国市': (latitude: 34.1666, longitude: 132.2200),
+    '防府市': (latitude: 34.0558, longitude: 131.5646),
+    '周南市': (latitude: 34.0556, longitude: 131.8061),
+    '光市': (latitude: 33.9614, longitude: 131.9422),
+    '長門市': (latitude: 34.3747, longitude: 131.1835),
+    '柳井市': (latitude: 33.9639, longitude: 132.1016),
+    '美祢市': (latitude: 34.1694, longitude: 131.2063),
+    '山陽小野田市': (latitude: 33.9794, longitude: 131.1743),
+    '下松市': (latitude: 34.0033, longitude: 131.8692),
+    // 6町（各町役場付近の代表座標）
+    '周防大島町': (latitude: 33.9276, longitude: 132.1952),
+    '和木町': (latitude: 34.2024, longitude: 132.2202),
+    '上関町': (latitude: 33.8309, longitude: 132.1104),
+    '田布施町': (latitude: 33.9547, longitude: 132.0414),
+    '平生町': (latitude: 33.9379, longitude: 132.0732),
+    '阿武町': (latitude: 34.5033, longitude: 131.4714),
+  };
+
   const RescueRequest({
     required this.id,
     required this.time,
@@ -59,6 +88,8 @@ class RescueRequest {
     required this.consideration,
     required this.latPercent,
     required this.topPercent,
+    this.latitude = defaultLatitude,
+    this.longitude = defaultLongitude,
     required this.status,
     this.dbId,
   });
@@ -80,6 +111,12 @@ class RescueRequest {
   /// マップ縦位置（0〜100%）
   final double topPercent;
 
+  /// 緯度（WGS84）
+  final double latitude;
+
+  /// 経度（WGS84）
+  final double longitude;
+
   final RequestStatus status;
   final String? dbId;
 
@@ -89,6 +126,12 @@ class RescueRequest {
     final dbId = (rawDbId != null && rawDbId.isNotEmpty) ? rawDbId : null;
     final requestId = _firstNonEmpty([row['request_id']], '');
     final id = requestId.isNotEmpty ? requestId : 'DB-${dbId ?? ''}';
+    final location = _firstNonEmpty(
+      [row['location_text'], row['location']],
+      '位置情報',
+    );
+    final coords =
+        parseCoordinates(row) ?? resolveCoordinatesFromLocation(location);
 
     return RescueRequest(
       id: id,
@@ -100,7 +143,7 @@ class RescueRequest {
       agency: parseAgency(
         _firstNonEmpty([row['assigned_agency'], row['request_type']], ''),
       ),
-      location: _firstNonEmpty([row['location_text'], row['location']], '位置情報'),
+      location: location,
       distance: _firstNonEmpty([row['distance_text'], row['distance']], ''),
       content: _firstNonEmpty([row['rescue_details'], row['detail']], '救助要請'),
       consideration: _firstNonEmpty(
@@ -109,12 +152,49 @@ class RescueRequest {
       ),
       latPercent: _parseDouble(row['lat_percent'], 50.0),
       topPercent: _parseDouble(row['top_percent'], 50.0),
+      latitude: coords.latitude,
+      longitude: coords.longitude,
       status: parseStatus(row['status']),
     );
   }
 
+  /// DB レコードから緯度・経度（`latitude`/`lat`, `longitude`/`lng`/`lon`）をパース
+  static ({double latitude, double longitude})? parseCoordinates(
+    Map<String, dynamic> row,
+  ) {
+    final rawLat = row['latitude'] ?? row['lat'];
+    final rawLng = row['longitude'] ?? row['lng'] ?? row['lon'];
+    if (rawLat == null || rawLng == null) return null;
+
+    final lat = rawLat is num
+        ? rawLat.toDouble()
+        : double.tryParse(rawLat.toString().trim());
+    final lng = rawLng is num
+        ? rawLng.toDouble()
+        : double.tryParse(rawLng.toString().trim());
+    if (lat == null || lng == null || !lat.isFinite || !lng.isFinite) {
+      return null;
+    }
+    if (lat < -90 || lat > 90 || lng < -180 || lng > 180) {
+      return null;
+    }
+    return (latitude: lat, longitude: lng);
+  }
+
+  /// 住所文字列に含まれる山口県内市町名から代表座標を解決
+  static ({double latitude, double longitude}) resolveCoordinatesFromLocation(
+    String location,
+  ) {
+    for (final entry in _yamaguchiMunicipalityCoordinates.entries) {
+      if (location.contains(entry.key)) {
+        return entry.value;
+      }
+    }
+    return (latitude: defaultLatitude, longitude: defaultLongitude);
+  }
+
   static double _parseDouble(Object? value, double fallback) {
-    if (value is num) return value.toDouble();
+    if (value is num && value.isFinite) return value.toDouble();
     if (value != null) {
       final parsed = double.tryParse(value.toString().trim());
       if (parsed != null && parsed.isFinite) return parsed;
@@ -193,6 +273,8 @@ class RescueRequest {
     String? consideration,
     double? latPercent,
     double? topPercent,
+    double? latitude,
+    double? longitude,
     RequestStatus? status,
     String? dbId,
   }) {
@@ -209,6 +291,8 @@ class RescueRequest {
       consideration: consideration ?? this.consideration,
       latPercent: latPercent ?? this.latPercent,
       topPercent: topPercent ?? this.topPercent,
+      latitude: latitude ?? this.latitude,
+      longitude: longitude ?? this.longitude,
       status: status ?? this.status,
       dbId: dbId ?? this.dbId,
     );

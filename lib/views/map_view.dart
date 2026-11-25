@@ -4,7 +4,7 @@ import 'package:material_ui/material_ui.dart';
 
 import '../state/rescue_store.dart';
 import '../theme/mamo_theme.dart';
-import '../widgets/fake_map_view.dart';
+import '../widgets/gsi_map_view.dart';
 
 /// 位置情報マップ画面（救助要請件数・現在時刻・全ピンマップ）
 class MapView extends StatelessWidget {
@@ -94,9 +94,10 @@ class MapView extends StatelessWidget {
                             ),
                           ),
                         ),
-                        FakeMapView(
+                        GsiMapView(
                           requests: store.requests,
                           height: mapHeight,
+                          initialZoom: 9.0,
                           onPinTap: store.selectFromMap,
                         ),
                       ],
