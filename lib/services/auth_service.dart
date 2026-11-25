@@ -37,8 +37,16 @@ class SupabaseAuthService implements AuthService {
   SupabaseClient? _resolveClient() {
     if (_disposed) return null;
     if (_injectedClient != null) return _injectedClient;
-    final resolved = clientResolver?.call();
-    if (resolved != null) return resolved;
+    final resolver = clientResolver;
+    if (resolver != null) {
+      try {
+        final resolved = resolver();
+        if (resolved != null) return resolved;
+      } catch (e) {
+        debugPrint('MAMO 認証クライアント解決エラー: $e');
+        return null;
+      }
+    }
     try {
       if (Supabase.instance.isInitialized) {
         return Supabase.instance.client;
@@ -80,14 +88,7 @@ class SupabaseAuthService implements AuthService {
       if (_disposed) return null;
     }
 
-    SupabaseClient? resolvedClient;
-    try {
-      resolvedClient = _resolveClient();
-    } catch (e) {
-      debugPrint('MAMO 認証クライアント解決エラー: $e');
-      return null;
-    }
-    final client = resolvedClient;
+    final client = _resolveClient();
     if (client == null) return null;
     _ensureAuthListener(client);
 
