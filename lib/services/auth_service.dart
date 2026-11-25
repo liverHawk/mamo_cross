@@ -74,12 +74,20 @@ class SupabaseAuthService implements AuthService {
 
   @override
   Future<String?> ensureAnonymousSession() async {
+    if (_disposed) return null;
     while (_inFlightSignOut != null) {
       await _inFlightSignOut!.catchError((_) {});
       if (_disposed) return null;
     }
 
-    final client = _resolveClient();
+    SupabaseClient? resolvedClient;
+    try {
+      resolvedClient = _resolveClient();
+    } catch (e) {
+      debugPrint('MAMO 認証クライアント解決エラー: $e');
+      return null;
+    }
+    final client = resolvedClient;
     if (client == null) return null;
     _ensureAuthListener(client);
 
@@ -90,7 +98,8 @@ class SupabaseAuthService implements AuthService {
     if (inFlight != null) return inFlight;
 
     final epoch = _authEpoch;
-    late final Future<String?> future;
+    Future<String?>? future;
+    var settled = false;
     future = () async {
       try {
         final response = await client.auth.signInAnonymously();
@@ -100,12 +109,15 @@ class SupabaseAuthService implements AuthService {
         debugPrint('MAMO 匿名認証エラー: $e');
         return null;
       } finally {
-        if (identical(_inFlightSignIn, future)) {
+        settled = true;
+        if (future != null && identical(_inFlightSignIn, future)) {
           _inFlightSignIn = null;
         }
       }
     }();
-    _inFlightSignIn = future;
+    if (!settled) {
+      _inFlightSignIn = future;
+    }
     return future;
   }
 
@@ -113,7 +125,8 @@ class SupabaseAuthService implements AuthService {
   Future<void> signOut() {
     _authEpoch++;
     final previousSignOut = _inFlightSignOut;
-    late final Future<void> future;
+    Future<void>? future;
+    var settled = false;
     future = () async {
       try {
         if (previousSignOut != null) {
@@ -131,13 +144,18 @@ class SupabaseAuthService implements AuthService {
         } catch (e) {
           debugPrint('MAMO サインアウトエラー: $e');
         }
+      } catch (e) {
+        debugPrint('MAMO サインアウトエラー: $e');
       } finally {
-        if (identical(_inFlightSignOut, future)) {
+        settled = true;
+        if (future != null && identical(_inFlightSignOut, future)) {
           _inFlightSignOut = null;
         }
       }
     }();
-    _inFlightSignOut = future;
+    if (!settled) {
+      _inFlightSignOut = future;
+    }
     return future;
   }
 
