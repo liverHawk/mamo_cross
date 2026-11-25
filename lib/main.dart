@@ -1,12 +1,22 @@
 import 'package:material_ui/material_ui.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 
+import 'config/supabase_config.dart';
 import 'models/app_mode.dart';
 import 'pages/mamo_root_page.dart';
 import 'services/rescue_data_source.dart';
 import 'state/rescue_store.dart';
 import 'theme/mamo_theme.dart';
 
-void main() {
+Future<void> main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  const config = SupabaseConfig.fromEnvironment;
+  if (config.isConfigured) {
+    await Supabase.initialize(
+      url: config.url,
+      publishableKey: config.publishableKey,
+    );
+  }
   runApp(const MamoApp());
 }
 
