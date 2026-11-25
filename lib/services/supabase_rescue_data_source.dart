@@ -197,9 +197,14 @@ class SupabaseRescueDataSource implements RescueDataSource {
       final client = _resolveClient();
       if (client == null) return null;
 
+      // RLS: 本人の要請のみ参照可能にするため、認証済みなら user_id を付与
+      final uid = client.auth.currentUser?.id;
+      final data = <String, dynamic>{...payload};
+      if (uid != null && data['user_id'] == null) data['user_id'] = uid;
+
       final row = await client
           .from(_tableName)
-          .insert(payload)
+          .insert(data)
           .select()
           .maybeSingle()
           .abortSignal(_disposeCompleter.future);
