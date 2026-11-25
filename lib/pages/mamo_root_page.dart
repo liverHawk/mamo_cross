@@ -1,7 +1,9 @@
 import 'package:material_ui/material_ui.dart';
 
 import '../models/app_mode.dart';
+import '../services/auth_service.dart';
 import '../services/rescue_data_source.dart';
+import '../services/supabase_citizen_data_source.dart';
 import '../services/supabase_rescue_data_source.dart';
 import '../state/citizen_store.dart';
 import '../state/rescue_store.dart';
@@ -41,7 +43,12 @@ class _MamoRootPageState extends State<MamoRootPage> {
   void initState() {
     super.initState();
     _mode = widget.initialMode;
-    _citizenStore = CitizenStore();
+    final connectCitizenRemote =
+        widget.store == null && widget.dataSource == null && widget.autoConnect;
+    _citizenStore = CitizenStore(
+      dataSource: connectCitizenRemote ? SupabaseCitizenDataSource() : null,
+      authService: connectCitizenRemote ? SupabaseAuthService() : null,
+    );
     _initRescueStore();
   }
 

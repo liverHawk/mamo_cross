@@ -57,6 +57,10 @@ class CitizenSafetyTab extends StatelessWidget {
                     crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
                       _MySafetyControlCard(store: store),
+                      if (store.isRemoteConnected) ...[
+                        const SizedBox(height: 12),
+                        _FamilyGroupCard(store: store),
+                      ],
                       const SizedBox(height: 14),
                       Wrap(
                         spacing: 6,
@@ -349,6 +353,117 @@ class _SafetyMemberTile extends StatelessWidget {
               fontWeight: FontWeight.w800,
               color: member.status.badgeColor,
             ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _FamilyGroupCard extends StatefulWidget {
+  const _FamilyGroupCard({required this.store});
+
+  final CitizenStore store;
+
+  @override
+  State<_FamilyGroupCard> createState() => _FamilyGroupCardState();
+}
+
+class _FamilyGroupCardState extends State<_FamilyGroupCard> {
+  final TextEditingController _codeController = TextEditingController();
+  bool _joining = false;
+
+  @override
+  void dispose() {
+    _codeController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _join() async {
+    final code = _codeController.text.trim();
+    if (code.isEmpty || _joining) return;
+    setState(() => _joining = true);
+    final ok = await widget.store.joinFamilyGroup(code);
+    if (!mounted) return;
+    setState(() => _joining = false);
+    if (ok) _codeController.clear();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final inviteCode = widget.store.familyInviteCode;
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: const Color(0xFFE3EAF3)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Row(
+            children: [
+              const Expanded(
+                child: Text(
+                  '家族グループ連携',
+                  style: TextStyle(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w800,
+                    color: MamoColors.textPrimary,
+                  ),
+                ),
+              ),
+              if (inviteCode != null && inviteCode.isNotEmpty)
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 8,
+                    vertical: 4,
+                  ),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFEFF6FF),
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(color: const Color(0xFFBFDBFE)),
+                  ),
+                  child: SelectableText(
+                    '招待コード: $inviteCode',
+                    style: const TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w800,
+                      color: MamoColors.citizenBlue,
+                    ),
+                  ),
+                ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          Row(
+            children: [
+              Expanded(
+                child: TextField(
+                  controller: _codeController,
+                  textCapitalization: TextCapitalization.characters,
+                  decoration: const InputDecoration(
+                    hintText: '招待コードを入力（例: ABC123）',
+                    isDense: true,
+                    contentPadding: EdgeInsets.symmetric(
+                      horizontal: 10,
+                      vertical: 10,
+                    ),
+                    border: OutlineInputBorder(),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 8),
+              ElevatedButton(
+                onPressed: _joining ? null : _join,
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: MamoColors.citizenBlue,
+                  foregroundColor: Colors.white,
+                ),
+                child: Text(_joining ? '参加中...' : '参加'),
+              ),
+            ],
           ),
         ],
       ),
