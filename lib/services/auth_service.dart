@@ -29,6 +29,7 @@ class SupabaseAuthService implements AuthService {
       StreamController<String?>.broadcast();
   StreamSubscription<AuthState>? _authSub;
   Future<String?>? _inFlightSignIn;
+  Future<void>? _inFlightSignOut;
   int _authEpoch = 0;
   bool _listening = false;
   bool _disposed = false;
@@ -73,6 +74,11 @@ class SupabaseAuthService implements AuthService {
 
   @override
   Future<String?> ensureAnonymousSession() async {
+    while (_inFlightSignOut != null) {
+      await _inFlightSignOut!.catchError((_) {});
+      if (_disposed) return null;
+    }
+
     final client = _resolveClient();
     if (client == null) return null;
     _ensureAuthListener(client);
@@ -104,20 +110,35 @@ class SupabaseAuthService implements AuthService {
   }
 
   @override
-  Future<void> signOut() async {
+  Future<void> signOut() {
     _authEpoch++;
-    final inFlight = _inFlightSignIn;
-    if (inFlight != null) {
-      await inFlight.catchError((_) => null);
-    }
-    if (_disposed) return;
-    final client = _resolveClient();
-    if (client == null) return;
-    try {
-      await client.auth.signOut();
-    } catch (e) {
-      debugPrint('MAMO サインアウトエラー: $e');
-    }
+    final previousSignOut = _inFlightSignOut;
+    late final Future<void> future;
+    future = () async {
+      try {
+        if (previousSignOut != null) {
+          await previousSignOut.catchError((_) {});
+        }
+        final inFlightSignIn = _inFlightSignIn;
+        if (inFlightSignIn != null) {
+          await inFlightSignIn.catchError((_) => null);
+        }
+        if (_disposed) return;
+        final client = _resolveClient();
+        if (client == null) return;
+        try {
+          await client.auth.signOut();
+        } catch (e) {
+          debugPrint('MAMO サインアウトエラー: $e');
+        }
+      } finally {
+        if (identical(_inFlightSignOut, future)) {
+          _inFlightSignOut = null;
+        }
+      }
+    }();
+    _inFlightSignOut = future;
+    return future;
   }
 
   @override
