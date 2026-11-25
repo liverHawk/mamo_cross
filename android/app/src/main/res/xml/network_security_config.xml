@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<network-security-config>
+    <!-- 平文 HTTP を明示的に禁止（Supabase / 国土地理院タイルは HTTPS のみ） -->
+    <base-config cleartextTrafficPermitted="false" />
+</network-security-config>
