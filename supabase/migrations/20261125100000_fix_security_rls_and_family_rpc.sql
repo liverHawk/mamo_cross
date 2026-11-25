@@ -223,7 +223,7 @@ create policy "family_members_update_self" on public.family_members
   using (user_id = (select auth.uid()))
   with check (
     user_id = (select auth.uid())
-    and group_id = any((select private.user_family_group_ids()))
+    and group_id = any((select private.user_family_group_ids())::uuid[])
   );
 
 -- SELECT ポリシーも initPlan 形式で最適化
@@ -232,7 +232,7 @@ create policy "family_groups_select_member_or_creator" on public.family_groups
   for select to authenticated
   using (
     created_by = (select auth.uid())
-    or id = any((select private.user_family_group_ids()))
+    or id = any((select private.user_family_group_ids())::uuid[])
   );
 
 drop policy if exists "family_members_select_same_group" on public.family_members;
@@ -240,7 +240,7 @@ create policy "family_members_select_same_group" on public.family_members
   for select to authenticated
   using (
     user_id = (select auth.uid())
-    or group_id = any((select private.user_family_group_ids()))
+    or group_id = any((select private.user_family_group_ids())::uuid[])
   );
 
 drop policy if exists "messages_select_authenticated" on public.messages;
@@ -250,7 +250,7 @@ create policy "messages_select_authenticated" on public.messages
     kind = 'municipality_notice'
     or (
       kind = 'family_thread'
-      and group_id = any((select private.user_family_group_ids()))
+      and group_id = any((select private.user_family_group_ids())::uuid[])
     )
   );
 
@@ -266,7 +266,7 @@ create policy "messages_insert_family_thread" on public.messages
     kind = 'family_thread'
     and group_id is not null
     and sender_id = (select auth.uid())
-    and group_id = any((select private.user_family_group_ids()))
+    and group_id = any((select private.user_family_group_ids())::uuid[])
   );
 
 revoke insert on public.messages from anon;
