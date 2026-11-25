@@ -51,7 +51,8 @@ class RescueRequest {
   static const double defaultLongitude = 131.4706;
 
   static const Map<String, ({double latitude, double longitude})>
-      _yamaguchiCityCoordinates = {
+      _yamaguchiMunicipalityCoordinates = {
+    // 13市
     '山口市': (latitude: 34.1785, longitude: 131.4737),
     '下関市': (latitude: 33.9578, longitude: 130.9415),
     '萩市': (latitude: 34.4081, longitude: 131.3991),
@@ -65,6 +66,13 @@ class RescueRequest {
     '美祢市': (latitude: 34.1694, longitude: 131.2063),
     '山陽小野田市': (latitude: 33.9794, longitude: 131.1743),
     '下松市': (latitude: 34.0033, longitude: 131.8692),
+    // 6町（各町役場付近の代表座標）
+    '周防大島町': (latitude: 33.9276, longitude: 132.1952),
+    '和木町': (latitude: 34.2024, longitude: 132.2202),
+    '上関町': (latitude: 33.8309, longitude: 132.1104),
+    '田布施町': (latitude: 33.9547, longitude: 132.0414),
+    '平生町': (latitude: 33.9379, longitude: 132.0732),
+    '阿武町': (latitude: 34.5033, longitude: 131.4714),
   };
 
   const RescueRequest({
@@ -173,11 +181,11 @@ class RescueRequest {
     return (latitude: lat, longitude: lng);
   }
 
-  /// 住所文字列に含まれる山口県内市名から代表座標を解決
+  /// 住所文字列に含まれる山口県内市町名から代表座標を解決
   static ({double latitude, double longitude}) resolveCoordinatesFromLocation(
     String location,
   ) {
-    for (final entry in _yamaguchiCityCoordinates.entries) {
+    for (final entry in _yamaguchiMunicipalityCoordinates.entries) {
       if (location.contains(entry.key)) {
         return entry.value;
       }
