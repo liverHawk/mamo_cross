@@ -16,20 +16,28 @@ abstract interface class AuthService {
   void dispose();
 }
 
-/// `Supabase.instance.client`（または注入クライアント）を用いる AuthService 実装
+/// `Supabase.instance.client`（または注入・リゾルバクライアント）を用いる AuthService 実装
 class SupabaseAuthService implements AuthService {
-  SupabaseAuthService({SupabaseClient? client}) : _injectedClient = client;
+  SupabaseAuthService({
+    SupabaseClient? client,
+    this.clientResolver,
+  }) : _injectedClient = client;
 
   final SupabaseClient? _injectedClient;
+  final SupabaseClient? Function()? clientResolver;
   final StreamController<String?> _userIdController =
       StreamController<String?>.broadcast();
   StreamSubscription<AuthState>? _authSub;
+  Future<String?>? _inFlightSignIn;
+  int _authEpoch = 0;
   bool _listening = false;
   bool _disposed = false;
 
   SupabaseClient? _resolveClient() {
     if (_disposed) return null;
     if (_injectedClient != null) return _injectedClient;
+    final resolved = clientResolver?.call();
+    if (resolved != null) return resolved;
     try {
       if (Supabase.instance.isInitialized) {
         return Supabase.instance.client;
@@ -72,17 +80,37 @@ class SupabaseAuthService implements AuthService {
     final existing = client.auth.currentUser?.id;
     if (existing != null) return existing;
 
-    try {
-      final response = await client.auth.signInAnonymously();
-      return response.user?.id ?? client.auth.currentUser?.id;
-    } catch (e) {
-      debugPrint('MAMO 匿名認証エラー: $e');
-      return null;
-    }
+    final inFlight = _inFlightSignIn;
+    if (inFlight != null) return inFlight;
+
+    final epoch = _authEpoch;
+    late final Future<String?> future;
+    future = () async {
+      try {
+        final response = await client.auth.signInAnonymously();
+        if (_disposed || _authEpoch != epoch) return null;
+        return response.user?.id ?? client.auth.currentUser?.id;
+      } catch (e) {
+        debugPrint('MAMO 匿名認証エラー: $e');
+        return null;
+      } finally {
+        if (identical(_inFlightSignIn, future)) {
+          _inFlightSignIn = null;
+        }
+      }
+    }();
+    _inFlightSignIn = future;
+    return future;
   }
 
   @override
   Future<void> signOut() async {
+    _authEpoch++;
+    final inFlight = _inFlightSignIn;
+    if (inFlight != null) {
+      await inFlight.catchError((_) => null);
+    }
+    if (_disposed) return;
     final client = _resolveClient();
     if (client == null) return;
     try {
@@ -96,6 +124,7 @@ class SupabaseAuthService implements AuthService {
   void dispose() {
     if (_disposed) return;
     _disposed = true;
+    _authEpoch++;
     unawaited(_authSub?.cancel());
     unawaited(_userIdController.close());
   }

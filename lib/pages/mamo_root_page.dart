@@ -45,9 +45,16 @@ class _MamoRootPageState extends State<MamoRootPage> {
     _mode = widget.initialMode;
     final connectCitizenRemote =
         widget.store == null && widget.dataSource == null && widget.autoConnect;
+    final citizenDataSource =
+        connectCitizenRemote ? SupabaseCitizenDataSource() : null;
+    final authService = citizenDataSource != null
+        ? SupabaseAuthService(
+            clientResolver: () => citizenDataSource.sharedClient,
+          )
+        : null;
     _citizenStore = CitizenStore(
-      dataSource: connectCitizenRemote ? SupabaseCitizenDataSource() : null,
-      authService: connectCitizenRemote ? SupabaseAuthService() : null,
+      dataSource: citizenDataSource,
+      authService: authService,
     );
     _initRescueStore();
   }
