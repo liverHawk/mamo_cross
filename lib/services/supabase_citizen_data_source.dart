@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:math';
 
 import 'package:flutter/foundation.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
@@ -15,28 +14,49 @@ class SupabaseCitizenDataSource implements CitizenDataSource {
     SupabaseClient? client,
   }) : _injectedClient = client;
 
+  static final RegExp _safeGroupIdPattern = RegExp(r'^[a-zA-Z0-9_-]+$');
+
   final SupabaseConfig config;
   final SupabaseClient? _injectedClient;
 
   SupabaseClient? _ownedClient;
+  SupabaseClient? _activeClient;
   RealtimeChannel? _familyChannel;
   RealtimeChannel? _messagesChannel;
   RealtimeChannel? _sheltersChannel;
+  StreamController<List<FamilyMember>>? _familyController;
+  StreamController<CitizenMessage>? _messagesController;
+  StreamController<List<CitizenShelter>>? _sheltersController;
+  final Completer<void> _disposeCompleter = Completer<void>();
   bool _disposed = false;
+
+  /// `AuthService` とクライアントを共有するためのアクセサ
+  SupabaseClient? get sharedClient => _resolveClient();
+
+  static String? _sanitizeGroupId(String? groupId) {
+    final trimmed = groupId?.trim();
+    if (trimmed == null || trimmed.isEmpty) return null;
+    if (!_safeGroupIdPattern.hasMatch(trimmed)) return null;
+    return trimmed;
+  }
 
   SupabaseClient? _resolveClient() {
     if (_disposed) return null;
-    if (_injectedClient != null) return _injectedClient;
+    if (_injectedClient != null) {
+      _activeClient = _injectedClient;
+      return _injectedClient;
+    }
     if (!config.isConfigured) return null;
     try {
       if (config.url == SupabaseConfig.fromEnvironment.url &&
           config.publishableKey ==
               SupabaseConfig.fromEnvironment.publishableKey &&
           Supabase.instance.isInitialized) {
-        return Supabase.instance.client;
+        _activeClient = Supabase.instance.client;
+        return _activeClient;
       }
     } catch (_) {}
-    return _ownedClient ??= SupabaseClient(
+    _ownedClient ??= SupabaseClient(
       config.url,
       config.publishableKey,
       authOptions: const AuthClientOptions(autoRefreshToken: false),
@@ -45,6 +65,8 @@ class SupabaseCitizenDataSource implements CitizenDataSource {
         connectionCloseTimeout: Duration.zero,
       ),
     );
+    _activeClient = _ownedClient;
+    return _ownedClient;
   }
 
   @override
@@ -57,7 +79,8 @@ class SupabaseCitizenDataSource implements CitizenDataSource {
           .from('profiles')
           .select()
           .eq('id', userId)
-          .maybeSingle();
+          .maybeSingle()
+          .abortSignal(_disposeCompleter.future);
       if (row == null) return null;
       final profile = CitizenRegistrationProfile.fromSupabaseRow(row);
       final rawSafety = (row['safety_status'] ?? 'safe').toString();
@@ -68,7 +91,7 @@ class SupabaseCitizenDataSource implements CitizenDataSource {
       return (profile: profile, safety: safety);
     } catch (e) {
       debugPrint('MAMO プロフィール取得エラー: $e');
-      return null;
+      rethrow;
     }
   }
 
@@ -82,15 +105,19 @@ class SupabaseCitizenDataSource implements CitizenDataSource {
     final client = _resolveClient();
     if (client == null) return;
     try {
-      await client.from('profiles').upsert(
+      await client
+          .from('profiles')
+          .upsert(
             profile.toSupabaseUpsert(
               userId,
               safetyStatus: safetyStatus,
               locationNote: locationNote,
             ),
-          );
+          )
+          .abortSignal(_disposeCompleter.future);
     } catch (e) {
       debugPrint('MAMO プロフィール保存エラー: $e');
+      rethrow;
     }
   }
 
@@ -112,9 +139,13 @@ class SupabaseCitizenDataSource implements CitizenDataSource {
       if (locationNote != null && locationNote.trim().isNotEmpty) {
         payload['location_note'] = locationNote.trim();
       }
-      await client.from('profiles').upsert(payload);
+      await client
+          .from('profiles')
+          .upsert(payload)
+          .abortSignal(_disposeCompleter.future);
     } catch (e) {
       debugPrint('MAMO 安否更新エラー: $e');
+      rethrow;
     }
   }
 
@@ -130,7 +161,10 @@ class SupabaseCitizenDataSource implements CitizenDataSource {
           .from('family_members')
           .select('group_id')
           .eq('user_id', userId)
-          .limit(1);
+          .order('joined_at', ascending: false)
+          .order('safety_updated_at', ascending: false)
+          .limit(1)
+          .abortSignal(_disposeCompleter.future);
       if (memberships.isNotEmpty) {
         final groupId = memberships.first['group_id']?.toString();
         if (groupId != null && groupId.isNotEmpty) {
@@ -138,36 +172,46 @@ class SupabaseCitizenDataSource implements CitizenDataSource {
               .from('family_groups')
               .select()
               .eq('id', groupId)
-              .maybeSingle();
+              .maybeSingle()
+              .abortSignal(_disposeCompleter.future);
           if (groupRow != null) {
             return FamilyGroupInfo.fromSupabaseRow(groupRow);
           }
         }
       }
 
-      final inviteCode = _generateInviteCode();
-      final createdGroup = await client
-          .from('family_groups')
-          .insert(<String, dynamic>{
-            'name': 'マイ家族グループ',
-            'invite_code': inviteCode,
-            'created_by': userId,
-          })
-          .select()
-          .single();
-      final groupInfo = FamilyGroupInfo.fromSupabaseRow(createdGroup);
-      await client.from('family_members').upsert(<String, dynamic>{
-        'group_id': groupInfo.id,
-        'user_id': userId,
-        'display_name': displayName.trim().isEmpty ? 'あなた' : displayName.trim(),
-        'avatar': '🙂',
-        'role': 'owner',
-        'location_note': '〇〇地区付近',
-      });
-      return groupInfo;
+      final safeName =
+          displayName.trim().isEmpty ? 'あなた' : displayName.trim();
+      final created = await client
+          .rpc<dynamic>(
+            'create_default_family_group',
+            params: <String, dynamic>{
+              'p_group_name': 'マイ家族グループ',
+              'p_display_name': safeName,
+              'p_avatar': '🙂',
+            },
+          )
+          .abortSignal(_disposeCompleter.future);
+      if (created is Map) {
+        return FamilyGroupInfo.fromSupabaseRow(
+          Map<String, dynamic>.from(created),
+        );
+      }
+      if (created != null) {
+        final groupRow = await client
+            .from('family_groups')
+            .select()
+            .eq('id', created.toString())
+            .maybeSingle()
+            .abortSignal(_disposeCompleter.future);
+        if (groupRow != null) {
+          return FamilyGroupInfo.fromSupabaseRow(groupRow);
+        }
+      }
+      return null;
     } catch (e) {
       debugPrint('MAMO 家族グループ取得/作成エラー: $e');
-      return null;
+      rethrow;
     }
   }
 
@@ -179,24 +223,34 @@ class SupabaseCitizenDataSource implements CitizenDataSource {
     final client = _resolveClient();
     if (client == null) return null;
     try {
-      final groupId = await client.rpc<dynamic>(
-        'join_family_group_by_code',
-        params: <String, dynamic>{
-          'p_invite_code': inviteCode.trim(),
-          'p_display_name': displayName.trim().isEmpty ? 'あなた' : displayName.trim(),
-        },
-      );
+      final groupId = await client
+          .rpc<dynamic>(
+            'join_family_group_by_code',
+            params: <String, dynamic>{
+              'p_invite_code': inviteCode.trim(),
+              'p_display_name':
+                  displayName.trim().isEmpty ? 'あなた' : displayName.trim(),
+            },
+          )
+          .abortSignal(_disposeCompleter.future);
       if (groupId == null) return null;
       final groupRow = await client
           .from('family_groups')
           .select()
           .eq('id', groupId.toString())
-          .maybeSingle();
+          .maybeSingle()
+          .abortSignal(_disposeCompleter.future);
       if (groupRow == null) return null;
       return FamilyGroupInfo.fromSupabaseRow(groupRow);
+    } on PostgrestException catch (e) {
+      if (e.message.toLowerCase().contains('family group not found')) {
+        return null;
+      }
+      debugPrint('MAMO 家族グループ参加エラー: $e');
+      rethrow;
     } catch (e) {
       debugPrint('MAMO 家族グループ参加エラー: $e');
-      return null;
+      rethrow;
     }
   }
 
@@ -212,7 +266,8 @@ class SupabaseCitizenDataSource implements CitizenDataSource {
           .from('family_members')
           .select()
           .eq('group_id', groupId)
-          .order('joined_at', ascending: true);
+          .order('joined_at', ascending: true)
+          .abortSignal(_disposeCompleter.future);
       return rows
           .map(
             (row) => FamilyMember.fromSupabaseRow(
@@ -223,7 +278,7 @@ class SupabaseCitizenDataSource implements CitizenDataSource {
           .toList();
     } catch (e) {
       debugPrint('MAMO 家族メンバー取得エラー: $e');
-      return const [];
+      rethrow;
     }
   }
 
@@ -234,43 +289,71 @@ class SupabaseCitizenDataSource implements CitizenDataSource {
   }) {
     final client = _resolveClient();
     if (client == null) return const Stream.empty();
+    final prevChannel = _familyChannel;
+    final prevController = _familyController;
+
     final controller = StreamController<List<FamilyMember>>.broadcast();
-    final prev = _familyChannel;
-    if (prev != null) {
-      unawaited(client.removeChannel(prev));
-    }
+    _familyController = controller;
+    RealtimeChannel? channel;
+    var cleanedPrev = false;
 
-    final channel = client.channel('mamo-family-$groupId');
-    _familyChannel = channel;
-    channel
-        .onPostgresChanges(
-          event: PostgresChangeEvent.all,
-          schema: 'public',
-          table: 'family_members',
-          filter: PostgresChangeFilter(
-            type: PostgresChangeFilterType.eq,
-            column: 'group_id',
-            value: groupId,
-          ),
-          callback: (_) async {
-            if (_disposed || controller.isClosed) return;
-            final latest = await fetchFamilyMembers(
-              groupId,
-              currentUserId: currentUserId,
-            );
-            if (!_disposed && !controller.isClosed) {
-              controller.add(latest);
-            }
-          },
-        )
-        .subscribe();
-
-    controller.onCancel = () {
-      if (identical(_familyChannel, channel)) {
-        _familyChannel = null;
-        unawaited(client.removeChannel(channel));
+    try {
+      channel = client.channel('mamo-family-$groupId');
+      _familyChannel = channel;
+      if (prevChannel != null || prevController != null) {
+        cleanedPrev = true;
+        unawaited(
+          _cleanupChannelResources(client, prevChannel, prevController),
+        );
       }
-    };
+      channel
+          .onPostgresChanges(
+            event: PostgresChangeEvent.all,
+            schema: 'public',
+            table: 'family_members',
+            filter: PostgresChangeFilter(
+              type: PostgresChangeFilterType.eq,
+              column: 'group_id',
+              value: groupId,
+            ),
+            callback: (_) async {
+              if (_disposed || controller.isClosed) return;
+              try {
+                final latest = await fetchFamilyMembers(
+                  groupId,
+                  currentUserId: currentUserId,
+                );
+                if (!_disposed && !controller.isClosed) {
+                  controller.add(latest);
+                }
+              } catch (e) {
+                debugPrint('MAMO 家族メンバー更新取得エラー: $e');
+              }
+            },
+          )
+          .subscribe();
+
+      controller.onCancel = () {
+        if (!_disposed &&
+            !controller.hasListener &&
+            identical(_familyController, controller)) {
+          final ch = _familyChannel;
+          _familyChannel = null;
+          _familyController = null;
+          unawaited(_cleanupChannelResources(client, ch, controller));
+        }
+      };
+    } catch (e) {
+      debugPrint('MAMO 家族メンバー購読エラー: $e');
+      if (identical(_familyChannel, channel)) _familyChannel = null;
+      if (identical(_familyController, controller)) _familyController = null;
+      unawaited(_cleanupChannelResources(client, channel, controller));
+      if (!cleanedPrev && (prevChannel != null || prevController != null)) {
+        unawaited(
+          _cleanupChannelResources(client, prevChannel, prevController),
+        );
+      }
+    }
     return controller.stream;
   }
 
@@ -281,12 +364,19 @@ class SupabaseCitizenDataSource implements CitizenDataSource {
   }) async {
     final client = _resolveClient();
     if (client == null) return const [];
+    final safeGroupId = _sanitizeGroupId(groupId);
     try {
-      final rows = await client
-          .from('messages')
-          .select()
-          .order('created_at', ascending: true)
-          .limit(100);
+      final base = client.from('messages').select();
+      final filtered = safeGroupId != null
+          ? base.or(
+              'kind.eq.municipality_notice,and(kind.eq.family_thread,group_id.eq.$safeGroupId)',
+            )
+          : base.eq('kind', 'municipality_notice');
+      final rows = await filtered
+          .order('created_at', ascending: false)
+          .order('id', ascending: false)
+          .limit(100)
+          .abortSignal(_disposeCompleter.future);
       return rows
           .map(
             (row) => CitizenMessage.fromSupabaseRow(
@@ -294,10 +384,12 @@ class SupabaseCitizenDataSource implements CitizenDataSource {
               currentUserId: currentUserId,
             ),
           )
+          .toList()
+          .reversed
           .toList();
     } catch (e) {
       debugPrint('MAMO メッセージ取得エラー: $e');
-      return const [];
+      rethrow;
     }
   }
 
@@ -308,22 +400,64 @@ class SupabaseCitizenDataSource implements CitizenDataSource {
   }) {
     final client = _resolveClient();
     if (client == null) return const Stream.empty();
-    final controller = StreamController<CitizenMessage>.broadcast();
-    final prev = _messagesChannel;
-    if (prev != null) {
-      unawaited(client.removeChannel(prev));
-    }
+    final safeGroupId = _sanitizeGroupId(groupId);
+    final prevChannel = _messagesChannel;
+    final prevController = _messagesController;
 
-    final channel = client.channel('mamo-messages-${groupId ?? 'public'}');
-    _messagesChannel = channel;
-    channel
-        .onPostgresChanges(
+    final controller = StreamController<CitizenMessage>.broadcast();
+    _messagesController = controller;
+    RealtimeChannel? channel;
+    var cleanedPrev = false;
+
+    try {
+      channel = client.channel('mamo-messages-${safeGroupId ?? 'public'}');
+      _messagesChannel = channel;
+      if (prevChannel != null || prevController != null) {
+        cleanedPrev = true;
+        unawaited(
+          _cleanupChannelResources(client, prevChannel, prevController),
+        );
+      }
+
+      channel.onPostgresChanges(
+        event: PostgresChangeEvent.insert,
+        schema: 'public',
+        table: 'messages',
+        filter: PostgresChangeFilter(
+          type: PostgresChangeFilterType.eq,
+          column: 'kind',
+          value: 'municipality_notice',
+        ),
+        callback: (payload) {
+          if (_disposed || controller.isClosed) return;
+          final row = Map<String, dynamic>.from(payload.newRecord);
+          if (row['kind']?.toString() != 'municipality_notice') return;
+          controller.add(
+            CitizenMessage.fromSupabaseRow(
+              row,
+              currentUserId: currentUserId,
+            ),
+          );
+        },
+      );
+
+      if (safeGroupId != null) {
+        channel.onPostgresChanges(
           event: PostgresChangeEvent.insert,
           schema: 'public',
           table: 'messages',
+          filter: PostgresChangeFilter(
+            type: PostgresChangeFilterType.eq,
+            column: 'group_id',
+            value: safeGroupId,
+          ),
           callback: (payload) {
             if (_disposed || controller.isClosed) return;
             final row = Map<String, dynamic>.from(payload.newRecord);
+            if (row['kind']?.toString() != 'family_thread' ||
+                row['group_id']?.toString() != safeGroupId) {
+              return;
+            }
             controller.add(
               CitizenMessage.fromSupabaseRow(
                 row,
@@ -331,15 +465,32 @@ class SupabaseCitizenDataSource implements CitizenDataSource {
               ),
             );
           },
-        )
-        .subscribe();
-
-    controller.onCancel = () {
-      if (identical(_messagesChannel, channel)) {
-        _messagesChannel = null;
-        unawaited(client.removeChannel(channel));
+        );
       }
-    };
+
+      channel.subscribe();
+
+      controller.onCancel = () {
+        if (!_disposed &&
+            !controller.hasListener &&
+            identical(_messagesController, controller)) {
+          final ch = _messagesChannel;
+          _messagesChannel = null;
+          _messagesController = null;
+          unawaited(_cleanupChannelResources(client, ch, controller));
+        }
+      };
+    } catch (e) {
+      debugPrint('MAMO メッセージ購読エラー: $e');
+      if (identical(_messagesChannel, channel)) _messagesChannel = null;
+      if (identical(_messagesController, controller)) _messagesController = null;
+      unawaited(_cleanupChannelResources(client, channel, controller));
+      if (!cleanedPrev && (prevChannel != null || prevController != null)) {
+        unawaited(
+          _cleanupChannelResources(client, prevChannel, prevController),
+        );
+      }
+    }
     return controller.stream;
   }
 
@@ -373,7 +524,8 @@ class SupabaseCitizenDataSource implements CitizenDataSource {
           .from('messages')
           .insert(payload)
           .select()
-          .maybeSingle();
+          .maybeSingle()
+          .abortSignal(_disposeCompleter.future);
       if (row == null) return null;
       return CitizenMessage.fromSupabaseRow(
         Map<String, dynamic>.from(row),
@@ -381,7 +533,7 @@ class SupabaseCitizenDataSource implements CitizenDataSource {
       );
     } catch (e) {
       debugPrint('MAMO メッセージ送信エラー: $e');
-      return null;
+      rethrow;
     }
   }
 
@@ -393,13 +545,16 @@ class SupabaseCitizenDataSource implements CitizenDataSource {
       final rows = await client
           .from('shelters')
           .select()
-          .order('id', ascending: true);
+          .order('id', ascending: true)
+          .abortSignal(_disposeCompleter.future);
       return rows
-          .map((r) => CitizenShelter.fromSupabaseRow(Map<String, dynamic>.from(r)))
+          .map(
+            (r) => CitizenShelter.fromSupabaseRow(Map<String, dynamic>.from(r)),
+          )
           .toList();
     } catch (e) {
       debugPrint('MAMO 避難所取得エラー: $e');
-      return const [];
+      rethrow;
     }
   }
 
@@ -407,35 +562,63 @@ class SupabaseCitizenDataSource implements CitizenDataSource {
   Stream<List<CitizenShelter>> subscribeShelters() {
     final client = _resolveClient();
     if (client == null) return const Stream.empty();
+    final prevChannel = _sheltersChannel;
+    final prevController = _sheltersController;
+
     final controller = StreamController<List<CitizenShelter>>.broadcast();
-    final prev = _sheltersChannel;
-    if (prev != null) {
-      unawaited(client.removeChannel(prev));
-    }
+    _sheltersController = controller;
+    RealtimeChannel? channel;
+    var cleanedPrev = false;
 
-    final channel = client.channel('mamo-shelters');
-    _sheltersChannel = channel;
-    channel
-        .onPostgresChanges(
-          event: PostgresChangeEvent.all,
-          schema: 'public',
-          table: 'shelters',
-          callback: (_) async {
-            if (_disposed || controller.isClosed) return;
-            final latest = await fetchShelters();
-            if (!_disposed && !controller.isClosed) {
-              controller.add(latest);
-            }
-          },
-        )
-        .subscribe();
-
-    controller.onCancel = () {
-      if (identical(_sheltersChannel, channel)) {
-        _sheltersChannel = null;
-        unawaited(client.removeChannel(channel));
+    try {
+      channel = client.channel('mamo-shelters');
+      _sheltersChannel = channel;
+      if (prevChannel != null || prevController != null) {
+        cleanedPrev = true;
+        unawaited(
+          _cleanupChannelResources(client, prevChannel, prevController),
+        );
       }
-    };
+      channel
+          .onPostgresChanges(
+            event: PostgresChangeEvent.all,
+            schema: 'public',
+            table: 'shelters',
+            callback: (_) async {
+              if (_disposed || controller.isClosed) return;
+              try {
+                final latest = await fetchShelters();
+                if (!_disposed && !controller.isClosed) {
+                  controller.add(latest);
+                }
+              } catch (e) {
+                debugPrint('MAMO 避難所更新取得エラー: $e');
+              }
+            },
+          )
+          .subscribe();
+
+      controller.onCancel = () {
+        if (!_disposed &&
+            !controller.hasListener &&
+            identical(_sheltersController, controller)) {
+          final ch = _sheltersChannel;
+          _sheltersChannel = null;
+          _sheltersController = null;
+          unawaited(_cleanupChannelResources(client, ch, controller));
+        }
+      };
+    } catch (e) {
+      debugPrint('MAMO 避難所購読エラー: $e');
+      if (identical(_sheltersChannel, channel)) _sheltersChannel = null;
+      if (identical(_sheltersController, controller)) _sheltersController = null;
+      unawaited(_cleanupChannelResources(client, channel, controller));
+      if (!cleanedPrev && (prevChannel != null || prevController != null)) {
+        unawaited(
+          _cleanupChannelResources(client, prevChannel, prevController),
+        );
+      }
+    }
     return controller.stream;
   }
 
@@ -448,38 +631,109 @@ class SupabaseCitizenDataSource implements CitizenDataSource {
           .from('hazard_spots')
           .select()
           .eq('is_active', true)
-          .order('id', ascending: true);
+          .order('id', ascending: true)
+          .abortSignal(_disposeCompleter.future);
       return rows
-          .map((r) => CitizenHazardSpot.fromSupabaseRow(Map<String, dynamic>.from(r)))
+          .map(
+            (r) =>
+                CitizenHazardSpot.fromSupabaseRow(Map<String, dynamic>.from(r)),
+          )
           .toList();
     } catch (e) {
       debugPrint('MAMO 危険箇所取得エラー: $e');
-      return const [];
+      rethrow;
     }
   }
 
-  static String _generateInviteCode() {
-    const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
-    final rnd = Random.secure();
-    return List.generate(6, (_) => chars[rnd.nextInt(chars.length)]).join();
+  Future<void> _cleanupChannelResources(
+    SupabaseClient? client,
+    RealtimeChannel? channel,
+    StreamController<dynamic>? controller,
+  ) async {
+    if (channel != null) {
+      try {
+        final targetClient = client ?? _injectedClient ?? _ownedClient ?? _activeClient;
+        if (targetClient != null) {
+          await targetClient.removeChannel(channel);
+        } else {
+          await channel.unsubscribe();
+        }
+      } catch (e) {
+        debugPrint('SupabaseCitizenDataSource channel cleanup error: $e');
+      }
+    }
+    if (controller != null && !controller.isClosed) {
+      await controller.close();
+    }
   }
 
   @override
   Future<void> dispose() async {
     if (_disposed) return;
     _disposed = true;
-    final client = _injectedClient ?? _ownedClient;
-    if (client != null) {
-      if (_familyChannel != null) unawaited(client.removeChannel(_familyChannel!));
-      if (_messagesChannel != null) unawaited(client.removeChannel(_messagesChannel!));
-      if (_sheltersChannel != null) unawaited(client.removeChannel(_sheltersChannel!));
+    if (!_disposeCompleter.isCompleted) {
+      _disposeCompleter.complete();
     }
+
+    final controllers = <StreamController<dynamic>?>[
+      _familyController,
+      _messagesController,
+      _sheltersController,
+    ];
+    _familyController = null;
+    _messagesController = null;
+    _sheltersController = null;
+    for (final c in controllers) {
+      if (c != null && !c.isClosed) {
+        unawaited(c.close());
+      }
+    }
+
+    final channels = <RealtimeChannel>[
+      ?_familyChannel,
+      ?_messagesChannel,
+      ?_sheltersChannel,
+    ];
     _familyChannel = null;
     _messagesChannel = null;
     _sheltersChannel = null;
 
     final owned = _ownedClient;
     _ownedClient = null;
+    final activeClient = _activeClient;
+    _activeClient = null;
+
+    if (owned != null) {
+      final realtime = owned.realtime;
+      final conn = realtime.conn;
+      realtime.connState = SocketStates.disconnected;
+      realtime.conn = null;
+      realtime.reconnectTimer.reset();
+      realtime.heartbeatTimer?.cancel();
+      unawaited(realtime.disconnect());
+      if (conn != null) {
+        unawaited(conn.sink.close().catchError((Object _) {}));
+      }
+    }
+
+    for (final channel in channels) {
+      try {
+        final clientToRemoveFrom =
+            _injectedClient ?? (owned == null ? activeClient : null);
+        if (clientToRemoveFrom != null) {
+          await clientToRemoveFrom.removeChannel(channel);
+        } else {
+          final unsubFuture = channel.unsubscribe(Duration.zero);
+          if (owned != null) {
+            unawaited(owned.realtime.disconnect());
+          }
+          await unsubFuture;
+        }
+      } catch (e) {
+        debugPrint('SupabaseCitizenDataSource channel cleanup error: $e');
+      }
+    }
+
     if (owned != null) {
       try {
         await owned.dispose();

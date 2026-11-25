@@ -21,6 +21,7 @@ class SupabaseRescueDataSource implements RescueDataSource {
   final SupabaseClient? _injectedClient;
 
   SupabaseClient? _ownedClient;
+  SupabaseClient? _activeClient;
   RealtimeChannel? _channel;
   StreamController<RescueRealtimeEvent>? _realtimeController;
   final Completer<void> _disposeCompleter = Completer<void>();
@@ -28,7 +29,10 @@ class SupabaseRescueDataSource implements RescueDataSource {
 
   SupabaseClient? _resolveClient() {
     if (_disposed) return null;
-    if (_injectedClient != null) return _injectedClient;
+    if (_injectedClient != null) {
+      _activeClient = _injectedClient;
+      return _injectedClient;
+    }
     if (!config.isConfigured) {
       debugPrint('Supabase設定がありません');
       return null;
@@ -38,10 +42,11 @@ class SupabaseRescueDataSource implements RescueDataSource {
           config.publishableKey ==
               SupabaseConfig.fromEnvironment.publishableKey &&
           Supabase.instance.isInitialized) {
-        return Supabase.instance.client;
+        _activeClient = Supabase.instance.client;
+        return _activeClient;
       }
     } catch (_) {}
-    return _ownedClient ??= SupabaseClient(
+    _ownedClient ??= SupabaseClient(
       config.url,
       config.publishableKey,
       authOptions: const AuthClientOptions(autoRefreshToken: false),
@@ -50,6 +55,8 @@ class SupabaseRescueDataSource implements RescueDataSource {
         connectionCloseTimeout: Duration.zero,
       ),
     );
+    _activeClient = _ownedClient;
+    return _ownedClient;
   }
 
   @override
@@ -218,7 +225,7 @@ class SupabaseRescueDataSource implements RescueDataSource {
   ) async {
     if (channel != null) {
       try {
-        final client = _injectedClient ?? _ownedClient;
+        final client = _injectedClient ?? _ownedClient ?? _activeClient;
         if (client != null) {
           await client.removeChannel(channel);
         } else {
@@ -252,6 +259,8 @@ class SupabaseRescueDataSource implements RescueDataSource {
 
     final owned = _ownedClient;
     _ownedClient = null;
+    final activeClient = _activeClient;
+    _activeClient = null;
     if (owned != null) {
       final realtime = owned.realtime;
       final conn = realtime.conn;
@@ -267,9 +276,10 @@ class SupabaseRescueDataSource implements RescueDataSource {
 
     if (channel != null) {
       try {
-        final injected = _injectedClient;
-        if (injected != null) {
-          await injected.removeChannel(channel);
+        final clientToRemoveFrom =
+            _injectedClient ?? (owned == null ? activeClient : null);
+        if (clientToRemoveFrom != null) {
+          await clientToRemoveFrom.removeChannel(channel);
         } else {
           final unsubFuture = channel.unsubscribe(Duration.zero);
           if (owned != null) {
