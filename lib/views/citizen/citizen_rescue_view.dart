@@ -4,6 +4,7 @@ import '../../models/citizen_models.dart';
 import '../../state/citizen_store.dart';
 import '../../state/rescue_store.dart';
 import '../../theme/mamo_theme.dart';
+import 'package:flutter/services.dart';
 
 /// 利用者救助要請入力画面（#rescue）
 class CitizenRescueView extends StatefulWidget {
@@ -167,6 +168,7 @@ class _CitizenRescueViewState extends State<CitizenRescueView> {
                         const SizedBox(height: 14),
                         const _FieldLabel('お名前'),
                         TextField(
+                          inputFormatters: [LengthLimitingTextInputFormatter(100)],
                           controller: _nameController,
                           onChanged: (v) =>
                               widget.citizenStore.updateRescueDraft(name: v),
@@ -175,6 +177,7 @@ class _CitizenRescueViewState extends State<CitizenRescueView> {
                         const SizedBox(height: 14),
                         const _FieldLabel('救助内容'),
                         TextField(
+                          inputFormatters: [LengthLimitingTextInputFormatter(500)],
                           controller: _detailController,
                           minLines: 3,
                           maxLines: 5,
@@ -187,6 +190,7 @@ class _CitizenRescueViewState extends State<CitizenRescueView> {
                         const SizedBox(height: 14),
                         const _FieldLabel('救助時の配慮事項'),
                         TextField(
+                          inputFormatters: [LengthLimitingTextInputFormatter(500)],
                           controller: _careController,
                           minLines: 3,
                           maxLines: 5,

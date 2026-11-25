@@ -1,11 +1,11 @@
 import 'dart:async';
 
-import 'package:flutter/foundation.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../config/supabase_config.dart';
 import '../models/citizen_models.dart';
 import 'citizen_data_source.dart';
+import '../utils/app_logger.dart';
 
 /// Supabase に対する利用者側データソース実装
 class SupabaseCitizenDataSource implements CitizenDataSource {
@@ -90,7 +90,7 @@ class SupabaseCitizenDataSource implements CitizenDataSource {
       );
       return (profile: profile, safety: safety);
     } catch (e) {
-      debugPrint('MAMO プロフィール取得エラー: $e');
+      appLog('MAMO プロフィール取得エラー: $e');
       rethrow;
     }
   }
@@ -116,7 +116,7 @@ class SupabaseCitizenDataSource implements CitizenDataSource {
           )
           .abortSignal(_disposeCompleter.future);
     } catch (e) {
-      debugPrint('MAMO プロフィール保存エラー: $e');
+      appLog('MAMO プロフィール保存エラー: $e');
       rethrow;
     }
   }
@@ -144,7 +144,7 @@ class SupabaseCitizenDataSource implements CitizenDataSource {
           .upsert(payload)
           .abortSignal(_disposeCompleter.future);
     } catch (e) {
-      debugPrint('MAMO 安否更新エラー: $e');
+      appLog('MAMO 安否更新エラー: $e');
       rethrow;
     }
   }
@@ -210,7 +210,7 @@ class SupabaseCitizenDataSource implements CitizenDataSource {
       }
       return null;
     } catch (e) {
-      debugPrint('MAMO 家族グループ取得/作成エラー: $e');
+      appLog('MAMO 家族グループ取得/作成エラー: $e');
       rethrow;
     }
   }
@@ -246,10 +246,10 @@ class SupabaseCitizenDataSource implements CitizenDataSource {
       if (e.message.toLowerCase().contains('family group not found')) {
         return null;
       }
-      debugPrint('MAMO 家族グループ参加エラー: $e');
+      appLog('MAMO 家族グループ参加エラー: $e');
       rethrow;
     } catch (e) {
-      debugPrint('MAMO 家族グループ参加エラー: $e');
+      appLog('MAMO 家族グループ参加エラー: $e');
       rethrow;
     }
   }
@@ -277,7 +277,7 @@ class SupabaseCitizenDataSource implements CitizenDataSource {
           )
           .toList();
     } catch (e) {
-      debugPrint('MAMO 家族メンバー取得エラー: $e');
+      appLog('MAMO 家族メンバー取得エラー: $e');
       rethrow;
     }
   }
@@ -327,7 +327,7 @@ class SupabaseCitizenDataSource implements CitizenDataSource {
                   controller.add(latest);
                 }
               } catch (e) {
-                debugPrint('MAMO 家族メンバー更新取得エラー: $e');
+                appLog('MAMO 家族メンバー更新取得エラー: $e');
               }
             },
           )
@@ -344,7 +344,7 @@ class SupabaseCitizenDataSource implements CitizenDataSource {
         }
       };
     } catch (e) {
-      debugPrint('MAMO 家族メンバー購読エラー: $e');
+      appLog('MAMO 家族メンバー購読エラー: $e');
       if (identical(_familyChannel, channel)) _familyChannel = null;
       if (identical(_familyController, controller)) _familyController = null;
       unawaited(_cleanupChannelResources(client, channel, controller));
@@ -388,7 +388,7 @@ class SupabaseCitizenDataSource implements CitizenDataSource {
           .reversed
           .toList();
     } catch (e) {
-      debugPrint('MAMO メッセージ取得エラー: $e');
+      appLog('MAMO メッセージ取得エラー: $e');
       rethrow;
     }
   }
@@ -481,7 +481,7 @@ class SupabaseCitizenDataSource implements CitizenDataSource {
         }
       };
     } catch (e) {
-      debugPrint('MAMO メッセージ購読エラー: $e');
+      appLog('MAMO メッセージ購読エラー: $e');
       if (identical(_messagesChannel, channel)) _messagesChannel = null;
       if (identical(_messagesController, controller)) _messagesController = null;
       unawaited(_cleanupChannelResources(client, channel, controller));
@@ -532,7 +532,7 @@ class SupabaseCitizenDataSource implements CitizenDataSource {
         currentUserId: senderId,
       );
     } catch (e) {
-      debugPrint('MAMO メッセージ送信エラー: $e');
+      appLog('MAMO メッセージ送信エラー: $e');
       rethrow;
     }
   }
@@ -553,7 +553,7 @@ class SupabaseCitizenDataSource implements CitizenDataSource {
           )
           .toList();
     } catch (e) {
-      debugPrint('MAMO 避難所取得エラー: $e');
+      appLog('MAMO 避難所取得エラー: $e');
       rethrow;
     }
   }
@@ -592,7 +592,7 @@ class SupabaseCitizenDataSource implements CitizenDataSource {
                   controller.add(latest);
                 }
               } catch (e) {
-                debugPrint('MAMO 避難所更新取得エラー: $e');
+                appLog('MAMO 避難所更新取得エラー: $e');
               }
             },
           )
@@ -609,7 +609,7 @@ class SupabaseCitizenDataSource implements CitizenDataSource {
         }
       };
     } catch (e) {
-      debugPrint('MAMO 避難所購読エラー: $e');
+      appLog('MAMO 避難所購読エラー: $e');
       if (identical(_sheltersChannel, channel)) _sheltersChannel = null;
       if (identical(_sheltersController, controller)) _sheltersController = null;
       unawaited(_cleanupChannelResources(client, channel, controller));
@@ -640,7 +640,7 @@ class SupabaseCitizenDataSource implements CitizenDataSource {
           )
           .toList();
     } catch (e) {
-      debugPrint('MAMO 危険箇所取得エラー: $e');
+      appLog('MAMO 危険箇所取得エラー: $e');
       rethrow;
     }
   }
@@ -659,7 +659,7 @@ class SupabaseCitizenDataSource implements CitizenDataSource {
           await channel.unsubscribe();
         }
       } catch (e) {
-        debugPrint('SupabaseCitizenDataSource channel cleanup error: $e');
+        appLog('SupabaseCitizenDataSource channel cleanup error: $e');
       }
     }
     if (controller != null && !controller.isClosed) {
@@ -730,7 +730,7 @@ class SupabaseCitizenDataSource implements CitizenDataSource {
           await unsubFuture;
         }
       } catch (e) {
-        debugPrint('SupabaseCitizenDataSource channel cleanup error: $e');
+        appLog('SupabaseCitizenDataSource channel cleanup error: $e');
       }
     }
 
@@ -738,7 +738,7 @@ class SupabaseCitizenDataSource implements CitizenDataSource {
       try {
         await owned.dispose();
       } catch (e) {
-        debugPrint('SupabaseCitizenDataSource dispose error: $e');
+        appLog('SupabaseCitizenDataSource dispose error: $e');
       }
     }
   }

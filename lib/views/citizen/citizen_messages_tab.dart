@@ -3,6 +3,7 @@ import 'package:material_ui/material_ui.dart';
 import '../../models/citizen_models.dart';
 import '../../state/citizen_store.dart';
 import '../../theme/mamo_theme.dart';
+import 'package:flutter/services.dart';
 
 /// 利用者メッセージタブ（自治体お知らせ・家族連絡・クイック返信・自由送信）
 class CitizenMessagesTab extends StatefulWidget {
@@ -146,6 +147,7 @@ class _CitizenMessagesTabState extends State<CitizenMessagesTab> {
                       children: [
                         Expanded(
                           child: TextField(
+                            inputFormatters: [LengthLimitingTextInputFormatter(500)],
                             controller: _controller,
                             textInputAction: TextInputAction.send,
                             onSubmitted: (_) => _handleSend(),

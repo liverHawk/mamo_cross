@@ -7,6 +7,7 @@ import '../models/rescue_request.dart';
 import '../services/auth_service.dart';
 import '../services/citizen_data_source.dart';
 import 'rescue_store.dart';
+import '../utils/app_logger.dart';
 
 /// 利用者（住民・スマホ）側の状態管理ストア
 class CitizenStore extends ChangeNotifier {
@@ -156,7 +157,7 @@ class CitizenStore extends ChangeNotifier {
             notifyListeners();
           }
         } catch (e) {
-          debugPrint('MAMO 避難所初期取得エラー: $e');
+          appLog('MAMO 避難所初期取得エラー: $e');
         }
       }(),
       () async {
@@ -168,7 +169,7 @@ class CitizenStore extends ChangeNotifier {
             notifyListeners();
           }
         } catch (e) {
-          debugPrint('MAMO 危険箇所初期取得エラー: $e');
+          appLog('MAMO 危険箇所初期取得エラー: $e');
         }
       }(),
       () async {
@@ -181,7 +182,7 @@ class CitizenStore extends ChangeNotifier {
             notifyListeners();
           }
         } catch (e) {
-          debugPrint('MAMO メッセージ初期取得エラー: $e');
+          appLog('MAMO メッセージ初期取得エラー: $e');
         }
       }(),
     ]);
@@ -198,11 +199,11 @@ class CitizenStore extends ChangeNotifier {
           notifyListeners();
         },
         onError: (Object e) {
-          debugPrint('MAMO 避難所購読エラー: $e');
+          appLog('MAMO 避難所購読エラー: $e');
         },
       );
     } catch (e) {
-      debugPrint('MAMO 避難所購読開始エラー: $e');
+      appLog('MAMO 避難所購読開始エラー: $e');
     }
 
     final uid = authService?.currentUserId;
@@ -212,7 +213,7 @@ class CitizenStore extends ChangeNotifier {
         try {
           await _syncAuthenticatedUser(uid, expectedRevision: rev);
         } catch (e) {
-          debugPrint('MAMO 認証ユーザー初期同期エラー: $e');
+          appLog('MAMO 認証ユーザー初期同期エラー: $e');
         }
       });
     } else {
@@ -223,7 +224,7 @@ class CitizenStore extends ChangeNotifier {
           expectedRevision: rev,
         );
       } catch (e) {
-        debugPrint('MAMO 公開メッセージ購読エラー: $e');
+        appLog('MAMO 公開メッセージ購読エラー: $e');
       }
     }
   }
@@ -246,7 +247,7 @@ class CitizenStore extends ChangeNotifier {
           expectedRevision: rev,
         );
       } catch (e) {
-        debugPrint('MAMO 認証同期エラー: $e');
+        appLog('MAMO 認証同期エラー: $e');
       }
     });
   }
@@ -376,7 +377,7 @@ class CitizenStore extends ChangeNotifier {
         notifyListeners();
       },
       onError: (Object e) {
-        debugPrint('MAMO 家族メンバー購読エラー: $e');
+        appLog('MAMO 家族メンバー購読エラー: $e');
       },
     );
   }
@@ -437,7 +438,7 @@ class CitizenStore extends ChangeNotifier {
         notifyListeners();
       },
       onError: (Object e) {
-        debugPrint('MAMO メッセージ購読エラー: $e');
+        appLog('MAMO メッセージ購読エラー: $e');
       },
     );
   }
@@ -483,7 +484,7 @@ class CitizenStore extends ChangeNotifier {
         showToast('家族グループに参加しました');
         return true;
       } catch (e) {
-        debugPrint('MAMO 家族グループ参加エラー: $e');
+        appLog('MAMO 家族グループ参加エラー: $e');
         if (!_disposed && _authRevision == rev) {
           showToast('家族グループへの参加に失敗しました（通信状況をご確認ください）');
         }
@@ -603,7 +604,7 @@ class CitizenStore extends ChangeNotifier {
         }
         return true;
       } catch (e) {
-        debugPrint('MAMO プロフィール保存エラー: $e');
+        appLog('MAMO プロフィール保存エラー: $e');
         if (_disposed || _authRevision != rev) return false;
         if (_profileRequestSeq == reqSeq) {
           _profile = _lastSyncedProfile;
@@ -701,7 +702,7 @@ class CitizenStore extends ChangeNotifier {
           if (_disposed || _authRevision != rev) return;
           _lastSyncedSafety = status;
         } catch (e) {
-          debugPrint('MAMO 安否更新エラー: $e');
+          appLog('MAMO 安否更新エラー: $e');
           if (_disposed ||
               _authRevision != rev ||
               _safetyRequestSeq != reqSeq) {
@@ -884,7 +885,7 @@ class CitizenStore extends ChangeNotifier {
       _messages = next;
       showToast('メッセージを送信しました');
     } catch (e) {
-      debugPrint('MAMO メッセージ送信エラー: $e');
+      appLog('MAMO メッセージ送信エラー: $e');
       if (_disposed || _authRevision != expectedRevision) return;
       _removeOptimisticMessage(tempId);
       showToast('メッセージの送信に失敗しました');
@@ -916,7 +917,33 @@ class CitizenStore extends ChangeNotifier {
     notifyListeners();
   }
 
+  Future<RescueRequest>? _inflightRescue;
+
+  /// 二重送信防止: 送信処理中の再呼び出しは同一の送信結果を共有する
   Future<RescueRequest> submitRescue(
+    RescueStore rescueStore, {
+    String? name,
+    String? detail,
+    String? care,
+    String locationText = '〇〇地区付近',
+    String distanceText = '約150m先（デモ）',
+  }) {
+    final inflight = _inflightRescue;
+    if (inflight != null) return inflight;
+    final future = _submitRescueImpl(
+      rescueStore,
+      name: name,
+      detail: detail,
+      care: care,
+      locationText: locationText,
+      distanceText: distanceText,
+    );
+    final guarded = future.whenComplete(() => _inflightRescue = null);
+    _inflightRescue = guarded;
+    return guarded;
+  }
+
+  Future<RescueRequest> _submitRescueImpl(
     RescueStore rescueStore, {
     String? name,
     String? detail,
@@ -1056,7 +1083,7 @@ class CitizenStore extends ChangeNotifier {
           try {
             await authService!.signOut();
           } catch (e) {
-            debugPrint('MAMO サインアウトエラー: $e');
+            appLog('MAMO サインアウトエラー: $e');
           }
           if (_disposed || _authRevision != rev || _isLoggedIn) return;
           if (dataSource != null) {
@@ -1067,7 +1094,7 @@ class CitizenStore extends ChangeNotifier {
                 expectedRevision: rev,
               );
             } catch (e) {
-              debugPrint('MAMO ログアウト後メッセージ再購読エラー: $e');
+              appLog('MAMO ログアウト後メッセージ再購読エラー: $e');
             }
           }
         }),

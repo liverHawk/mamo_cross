@@ -6,6 +6,7 @@ import '../../models/app_mode.dart';
 import '../../models/citizen_models.dart';
 import '../../state/citizen_store.dart';
 import '../../theme/mamo_theme.dart';
+import 'package:flutter/services.dart';
 
 /// 利用者設定タブ（登録プロフィール確認/編集・配慮事項・通知スイッチ・モード切替・ログアウト）
 class CitizenSettingsTab extends StatefulWidget {
@@ -148,6 +149,7 @@ class _CitizenSettingsTabState extends State<CitizenSettingsTab> {
                             const SizedBox(height: 8),
                             if (_isEditing) ...[
                               TextField(
+                                inputFormatters: [LengthLimitingTextInputFormatter(100)],
                                 controller: _nameController,
                                 decoration: const InputDecoration(
                                   labelText: 'お名前',
@@ -158,6 +160,7 @@ class _CitizenSettingsTabState extends State<CitizenSettingsTab> {
                               ),
                               const SizedBox(height: 10),
                               TextField(
+                                inputFormatters: [LengthLimitingTextInputFormatter(300)],
                                 controller: _addressController,
                                 decoration: const InputDecoration(
                                   labelText: '市区町村・番地・建物名',

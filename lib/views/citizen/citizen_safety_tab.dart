@@ -3,6 +3,7 @@ import 'package:material_ui/material_ui.dart';
 import '../../models/citizen_models.dart';
 import '../../state/citizen_store.dart';
 import '../../theme/mamo_theme.dart';
+import 'package:flutter/services.dart';
 
 /// 利用者安否タブ（本人の安否登録・家族安否フィルタ・安否確認通知送信）
 class CitizenSafetyTab extends StatelessWidget {
@@ -453,6 +454,7 @@ class _FamilyGroupCardState extends State<_FamilyGroupCard> {
             children: [
               Expanded(
                 child: TextField(
+                  inputFormatters: [LengthLimitingTextInputFormatter(12)],
                   controller: _codeController,
                   maxLength: 6,
                   textCapitalization: TextCapitalization.characters,

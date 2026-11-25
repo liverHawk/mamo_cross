@@ -4,6 +4,7 @@ import '../../models/citizen_models.dart';
 import '../../state/citizen_store.dart';
 import '../../theme/mamo_theme.dart';
 import 'citizen_onboarding_widgets.dart';
+import 'package:flutter/services.dart';
 
 /// `#reg2` 新規登録 2/3：基本情報の入力画面
 class CitizenReg2View extends StatefulWidget {
@@ -107,6 +108,7 @@ class _CitizenReg2ViewState extends State<CitizenReg2View> {
                       children: <Widget>[
                         const _FieldLabel('名前（必須）'),
                         TextField(
+                          inputFormatters: [LengthLimitingTextInputFormatter(100)],
                           controller: _nameController,
                           decoration:
                               citizenInputDecoration(hintText: '例）山田 太郎'),
@@ -116,6 +118,7 @@ class _CitizenReg2ViewState extends State<CitizenReg2View> {
                         const SizedBox(height: 14),
                         const _FieldLabel('生年月日（必須）'),
                         TextField(
+                          inputFormatters: [LengthLimitingTextInputFormatter(32)],
                           controller: _birthDateController,
                           decoration:
                               citizenInputDecoration(hintText: '例）1990-01-01'),
@@ -179,6 +182,7 @@ class _CitizenReg2ViewState extends State<CitizenReg2View> {
                       children: <Widget>[
                         const _FieldLabel('住所（必須）'),
                         TextField(
+                          inputFormatters: [LengthLimitingTextInputFormatter(16)],
                           controller: _postalCodeController,
                           decoration: citizenInputDecoration(hintText: '郵便番号'),
                           onChanged: (v) =>
@@ -193,6 +197,7 @@ class _CitizenReg2ViewState extends State<CitizenReg2View> {
                         ),
                         const SizedBox(height: 10),
                         TextField(
+                          inputFormatters: [LengthLimitingTextInputFormatter(300)],
                           controller: _addressDetailController,
                           decoration: citizenInputDecoration(
                             hintText: '市区町村・番地・建物名',

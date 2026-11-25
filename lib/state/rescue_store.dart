@@ -5,6 +5,7 @@ import 'package:material_ui/material_ui.dart';
 import '../models/citizen_models.dart';
 import '../models/rescue_request.dart';
 import '../services/rescue_data_source.dart';
+import '../utils/app_logger.dart';
 
 /// MAMO アプリ全体の状態管理ストア
 class RescueStore extends ChangeNotifier {
@@ -132,7 +133,7 @@ class RescueStore extends ChangeNotifier {
         addDbRequest(row, notifyAlert: false);
       }
     } catch (e) {
-      debugPrint('MAMO DB取得エラー: $e');
+      appLog('MAMO DB取得エラー: $e');
     }
 
     if (_disposed) return;
@@ -161,7 +162,7 @@ class RescueStore extends ChangeNotifier {
               }
             },
             onError: (Object error, StackTrace stackTrace) {
-              debugPrint('MAMO Realtimeエラー: $error');
+              appLog('MAMO Realtimeエラー: $error');
               if (_disposed) return;
               if (_isRealtimeConnected) {
                 _isRealtimeConnected = false;
@@ -170,7 +171,7 @@ class RescueStore extends ChangeNotifier {
             },
           );
     } catch (e) {
-      debugPrint('MAMO Realtime購読エラー: $e');
+      appLog('MAMO Realtime購読エラー: $e');
       if (!_disposed && _isRealtimeConnected) {
         _isRealtimeConnected = false;
         notifyListeners();
@@ -212,7 +213,7 @@ class RescueStore extends ChangeNotifier {
             Future<void>.sync(
               () => ds.updateStatus(dbId: req.dbId!, status: localReq.status),
             ).catchError((Object e) {
-              debugPrint('MAMO追送ステータス更新エラー: $e');
+              appLog('MAMO追送ステータス更新エラー: $e');
             }),
           );
         }
@@ -339,7 +340,7 @@ class RescueStore extends ChangeNotifier {
       try {
         await ds.updateStatus(dbId: dbId, status: newStatus);
       } catch (e) {
-        debugPrint('ステータス更新エラー: $e');
+        appLog('ステータス更新エラー: $e');
       }
     }
   }
@@ -457,7 +458,7 @@ class RescueStore extends ChangeNotifier {
     try {
       insertedRow = await ds.insertRequest(payload);
     } catch (e) {
-      debugPrint('MAMO市民救助要請送信エラー: $e');
+      appLog('MAMO市民救助要請送信エラー: $e');
     }
 
     if (_disposed || insertedRow == null) {
@@ -495,7 +496,7 @@ class RescueStore extends ChangeNotifier {
         try {
           await ds.updateStatus(dbId: insertedDbId, status: reconciled.status);
         } catch (e) {
-          debugPrint('MAMO追送ステータス更新エラー: $e');
+          appLog('MAMO追送ステータス更新エラー: $e');
         }
       }
       return reconciled;

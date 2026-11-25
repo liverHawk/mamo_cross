@@ -4,6 +4,7 @@ import '../../models/citizen_models.dart';
 import '../../state/citizen_store.dart';
 import '../../theme/mamo_theme.dart';
 import 'citizen_onboarding_widgets.dart';
+import 'package:flutter/services.dart';
 
 /// `#reg3` 新規登録 3/3：救助要請時の情報（配慮事項）入力画面
 class CitizenReg3View extends StatefulWidget {
@@ -151,6 +152,7 @@ class _CitizenReg3ViewState extends State<CitizenReg3View> {
                           ),
                         ),
                         TextField(
+                          inputFormatters: [LengthLimitingTextInputFormatter(500)],
                           controller: _otherController,
                           minLines: 4,
                           maxLines: 6,
@@ -163,7 +165,7 @@ class _CitizenReg3ViewState extends State<CitizenReg3View> {
                     ),
                   ),
                   const CitizenInfoBox(
-                    text: '🔒 デモ版では入力内容を外部へ送信しません。',
+                    text: '⚠️ 展示デモ環境です。入力内容はデモ用クラウドに保存されます。実在の本名・詳しい住所・実際の病歴などは入力しないでください。',
                   ),
                   const CitizenOnboardingStepper(activeStep: 3),
                   CitizenPrimaryButton(

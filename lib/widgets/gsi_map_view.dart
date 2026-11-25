@@ -379,7 +379,8 @@ class _MapPin extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Tooltip(
-      message: '${request.name}：${request.status.label}\n${request.location}',
+      message:
+          '${_clip(request.name, 30)}：${request.status.label}\n${_clip(request.location, 60)}',
       child: MouseRegion(
         cursor: SystemMouseCursors.click,
         child: GestureDetector(
@@ -423,4 +424,10 @@ class _MapPin extends StatelessWidget {
       ),
     );
   }
+}
+
+/// Tooltip 用: 改行を空白化し長さを制限（長文による UI 崩れ防止）
+String _clip(String value, int max) {
+  final flat = value.replaceAll(RegExp(r'\s+'), ' ').trim();
+  return flat.length <= max ? flat : '${flat.substring(0, max)}…';
 }

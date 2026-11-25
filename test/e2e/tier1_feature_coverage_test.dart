@@ -618,7 +618,7 @@ void main() {
       expect(find.textContaining('（任意）'), findsAtLeastNWidgets(1));
       expect(find.text('救助・医療対応時に知っておいてほしいこと'), findsOneWidget);
       await tester.ensureVisible(find.text('登録する'));
-      expect(find.textContaining('外部へ送信しません'), findsOneWidget);
+      expect(find.textContaining('実在の本名'), findsOneWidget);
       expect(find.text('1'), findsOneWidget);
       expect(find.text('2'), findsOneWidget);
       expect(find.text('3'), findsOneWidget);

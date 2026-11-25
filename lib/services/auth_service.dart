@@ -1,7 +1,7 @@
 import 'dart:async';
 
-import 'package:flutter/foundation.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import '../utils/app_logger.dart';
 
 /// 利用者認証サービス（匿名認証ベース、将来メール認証へ拡張可能）
 abstract interface class AuthService {
@@ -107,7 +107,7 @@ class SupabaseAuthService implements AuthService {
         if (_disposed || _authEpoch != epoch) return null;
         return response.user?.id ?? client.auth.currentUser?.id;
       } catch (e) {
-        debugPrint('MAMO 匿名認証エラー: $e');
+        appLog('MAMO 匿名認証エラー: $e');
         return null;
       } finally {
         settled = true;
@@ -143,10 +143,10 @@ class SupabaseAuthService implements AuthService {
         try {
           await client.auth.signOut();
         } catch (e) {
-          debugPrint('MAMO サインアウトエラー: $e');
+          appLog('MAMO サインアウトエラー: $e');
         }
       } catch (e) {
-        debugPrint('MAMO サインアウトエラー: $e');
+        appLog('MAMO サインアウトエラー: $e');
       } finally {
         settled = true;
         if (future != null && identical(_inFlightSignOut, future)) {

@@ -8,6 +8,7 @@ import 'services/hq_auth_service.dart';
 import 'services/rescue_data_source.dart';
 import 'state/rescue_store.dart';
 import 'theme/mamo_theme.dart';
+import 'utils/app_logger.dart';
 
 /// Supabase 初期化を安全に実行する（未設定・オフライン・タイムアウト時はデモ継続）
 Future<void> initializeSupabaseSafely({
@@ -24,7 +25,7 @@ Future<void> initializeSupabaseSafely({
             );
     await run(config).timeout(timeout);
   } catch (e) {
-    debugPrint('Supabase 初期化をスキップしてオフライン/デモ起動します: $e');
+    appLog('Supabase 初期化をスキップしてオフライン/デモ起動します: $e');
   }
 }
 

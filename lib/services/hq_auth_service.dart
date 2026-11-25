@@ -4,6 +4,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import '../config/supabase_config.dart';
 import 'rescue_data_source.dart';
 import 'supabase_rescue_data_source.dart';
+import '../utils/app_logger.dart';
 
 /// 対策本部（HQ）オペレーター認証の失敗
 class HqAuthException implements Exception {
@@ -92,7 +93,7 @@ class SupabaseHqAuthService implements HqAuthService {
         _lockedUntil = _clock().add(lockout);
         _failures = 0;
       }
-      if (kDebugMode) debugPrint('MAMO HQ認証エラー: $e');
+      if (kDebugMode) appLog('MAMO HQ認証エラー: $e');
       throw const HqAuthException('パスコードが正しくありません。');
     }
   }

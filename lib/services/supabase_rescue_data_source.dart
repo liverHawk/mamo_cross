@@ -1,11 +1,11 @@
 import 'dart:async';
 
-import 'package:flutter/foundation.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../config/supabase_config.dart';
 import '../models/rescue_request.dart';
 import 'rescue_data_source.dart';
+import '../utils/app_logger.dart';
 
 /// Supabase (`public.rescue_requests`) に対する本番データソース実装
 class SupabaseRescueDataSource implements RescueDataSource {
@@ -34,7 +34,7 @@ class SupabaseRescueDataSource implements RescueDataSource {
       return _injectedClient;
     }
     if (!config.isConfigured) {
-      debugPrint('Supabase設定がありません');
+      appLog('Supabase設定がありません');
       return null;
     }
     try {
@@ -140,7 +140,7 @@ class SupabaseRescueDataSource implements RescueDataSource {
           .subscribe((status, error) {
             final connected = status == RealtimeSubscribeStatus.subscribed;
             if (error != null) {
-              debugPrint('MAMO realtime error ($status): $error');
+              appLog('MAMO realtime error ($status): $error');
             }
             if (!_disposed) {
               onConnectionChanged?.call(connected);
@@ -155,7 +155,7 @@ class SupabaseRescueDataSource implements RescueDataSource {
         }
       };
     } catch (e) {
-      debugPrint('MAMO realtime subscribe failed: $e');
+      appLog('MAMO realtime subscribe failed: $e');
       if (identical(_channel, channel)) {
         _channel = null;
       }
@@ -211,7 +211,7 @@ class SupabaseRescueDataSource implements RescueDataSource {
       if (row == null) return null;
       return Map<String, dynamic>.from(row);
     } catch (e) {
-      debugPrint('MAMO救助要請送信エラー: $e');
+      appLog('MAMO救助要請送信エラー: $e');
       return null;
     }
   }
@@ -237,7 +237,7 @@ class SupabaseRescueDataSource implements RescueDataSource {
           await channel.unsubscribe();
         }
       } catch (e) {
-        debugPrint('MAMO realtime channel cleanup error: $e');
+        appLog('MAMO realtime channel cleanup error: $e');
       }
     }
 
@@ -293,7 +293,7 @@ class SupabaseRescueDataSource implements RescueDataSource {
           await unsubFuture;
         }
       } catch (e) {
-        debugPrint('MAMO realtime channel cleanup error: $e');
+        appLog('MAMO realtime channel cleanup error: $e');
       }
     }
 
@@ -301,7 +301,7 @@ class SupabaseRescueDataSource implements RescueDataSource {
       try {
         await owned.dispose();
       } catch (e) {
-        debugPrint('SupabaseClient dispose error: $e');
+        appLog('SupabaseClient dispose error: $e');
       }
     }
   }
