@@ -33,6 +33,9 @@ abstract interface class RescueDataSource {
     required RequestStatus status,
   });
 
+  /// 新規救助要請を DB へ登録し、登録後の行データを返す（未設定・失敗時は null）
+  Future<Map<String, dynamic>?> insertRequest(Map<String, dynamic> payload);
+
   /// チャネルやクライアント等のリソースを解放する
   Future<void> dispose();
 }

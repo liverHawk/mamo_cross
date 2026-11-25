@@ -82,17 +82,29 @@ class DashboardView extends StatelessWidget {
                 ],
               ),
               const SizedBox(height: 6),
-              for (var i = 0; i < recentRequests.length; i++) ...[
-                if (i > 0)
-                  Container(
-                    height: 1,
-                    color: MamoColors.miniDivider,
+              if (recentRequests.isEmpty)
+                const Padding(
+                  padding: EdgeInsets.symmetric(vertical: 16),
+                  child: Text(
+                    '受信した救助要請はありません。',
+                    style: TextStyle(
+                      fontSize: 14,
+                      color: MamoColors.textSecondary,
+                    ),
                   ),
-                _MiniRequestTile(
-                  request: recentRequests[i],
-                  onTap: () => store.selectFromMap(recentRequests[i].id),
-                ),
-              ],
+                )
+              else
+                for (var i = 0; i < recentRequests.length; i++) ...[
+                  if (i > 0)
+                    Container(
+                      height: 1,
+                      color: MamoColors.miniDivider,
+                    ),
+                  _MiniRequestTile(
+                    request: recentRequests[i],
+                    onTap: () => store.selectFromMap(recentRequests[i].id),
+                  ),
+                ],
             ],
           ),
         );

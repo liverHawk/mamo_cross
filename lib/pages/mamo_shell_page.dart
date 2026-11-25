@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:material_ui/material_ui.dart';
 
+import '../models/app_mode.dart';
 import '../models/rescue_request.dart';
 import '../services/rescue_data_source.dart';
 import '../services/supabase_rescue_data_source.dart';
@@ -24,12 +25,14 @@ class MamoShellPage extends StatefulWidget {
     this.dataSource,
     this.startClock = true,
     this.autoConnect = true,
+    this.onSelectMode,
   });
 
   final RescueStore? store;
   final RescueDataSource? dataSource;
   final bool startClock;
   final bool autoConnect;
+  final ValueChanged<MamoAppMode>? onSelectMode;
 
   @override
   State<MamoShellPage> createState() => _MamoShellPageState();
@@ -155,6 +158,7 @@ class _MamoShellPageState extends State<MamoShellPage> {
                       store: _store,
                       width: 218,
                       onNavigate: () => Navigator.of(context).pop(),
+                      onSelectMode: widget.onSelectMode,
                     );
                   },
                 ),
@@ -171,6 +175,7 @@ class _MamoShellPageState extends State<MamoShellPage> {
                   store: _store,
                   isMobile: isMobile,
                   onMenuTap: () => _scaffoldKey.currentState?.openDrawer(),
+                  onSelectMode: widget.onSelectMode,
                 ),
                 Expanded(
                   child: Row(
@@ -180,6 +185,7 @@ class _MamoShellPageState extends State<MamoShellPage> {
                         AppSidebar(
                           store: _store,
                           width: sidebarWidth,
+                          onSelectMode: widget.onSelectMode,
                         ),
                       Expanded(
                         child: _buildActiveView(_store),

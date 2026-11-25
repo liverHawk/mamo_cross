@@ -1,15 +1,39 @@
 import 'package:material_ui/material_ui.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 
-import 'pages/mamo_shell_page.dart';
+import 'config/supabase_config.dart';
+import 'models/app_mode.dart';
+import 'pages/mamo_root_page.dart';
 import 'services/rescue_data_source.dart';
 import 'state/rescue_store.dart';
 import 'theme/mamo_theme.dart';
 
-void main() {
+/// Supabase 初期化を安全に実行する（未設定・オフライン・タイムアウト時はデモ継続）
+Future<void> initializeSupabaseSafely({
+  SupabaseConfig config = SupabaseConfig.fromEnvironment,
+  Duration timeout = const Duration(seconds: 5),
+  Future<void> Function(SupabaseConfig config)? initializer,
+}) async {
+  if (!config.isConfigured) return;
+  try {
+    final run = initializer ??
+        (c) => Supabase.initialize(
+              url: c.url,
+              publishableKey: c.publishableKey,
+            );
+    await run(config).timeout(timeout);
+  } catch (e) {
+    debugPrint('Supabase 初期化をスキップしてオフライン/デモ起動します: $e');
+  }
+}
+
+Future<void> main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  await initializeSupabaseSafely();
   runApp(const MamoApp());
 }
 
-/// MAMO 自治体管理システム ルートウィジェット
+/// MAMO デモ版アプリ（ポータル／利用者／自治体管理システム）ルートウィジェット
 class MamoApp extends StatelessWidget {
   const MamoApp({
     super.key,
@@ -17,12 +41,14 @@ class MamoApp extends StatelessWidget {
     this.dataSource,
     this.startClock = true,
     this.autoConnect = true,
+    this.initialMode = MamoAppMode.portal,
   });
 
   final RescueStore? store;
   final RescueDataSource? dataSource;
   final bool startClock;
   final bool autoConnect;
+  final MamoAppMode initialMode;
 
   @override
   Widget build(BuildContext context) {
@@ -30,11 +56,12 @@ class MamoApp extends StatelessWidget {
       title: 'MAMO 自治体管理システム',
       debugShowCheckedModeBanner: false,
       theme: MamoTheme.light(),
-      home: MamoShellPage(
+      home: MamoRootPage(
         store: store,
         dataSource: dataSource,
         startClock: startClock,
         autoConnect: autoConnect,
+        initialMode: initialMode,
       ),
     );
   }

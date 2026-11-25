@@ -132,7 +132,9 @@ class RescueRequest {
       name: _firstNonEmpty([row['requester_name'], row['user_name']], '不明'),
       age: int.tryParse('${row['age'] ?? ''}') ?? 0,
       gender: _firstNonEmpty([row['gender']], ''),
-      agency: parseAgency(row['request_type']),
+      agency: parseAgency(
+        _firstNonEmpty([row['assigned_agency'], row['request_type']], ''),
+      ),
       location: location,
       distance: _firstNonEmpty([row['distance_text'], row['distance']], ''),
       content: _firstNonEmpty([row['rescue_details'], row['detail']], '救助要請'),
@@ -140,8 +142,8 @@ class RescueRequest {
         [row['considerations'], row['health_condition'], row['consideration']],
         'なし',
       ),
-      latPercent: 50.0,
-      topPercent: 50.0,
+      latPercent: _parseDouble(row['lat_percent'], 50.0),
+      topPercent: _parseDouble(row['top_percent'], 50.0),
       latitude: coords.latitude,
       longitude: coords.longitude,
       status: parseStatus(row['status']),
@@ -181,6 +183,15 @@ class RescueRequest {
       }
     }
     return (latitude: defaultLatitude, longitude: defaultLongitude);
+  }
+
+  static double _parseDouble(Object? value, double fallback) {
+    if (value is num && value.isFinite) return value.toDouble();
+    if (value != null) {
+      final parsed = double.tryParse(value.toString().trim());
+      if (parsed != null && parsed.isFinite) return parsed;
+    }
+    return fallback;
   }
 
   /// DB `request_type` 文字列から `AgencyType` へ変換

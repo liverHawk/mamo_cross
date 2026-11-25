@@ -1,5 +1,6 @@
 import 'package:material_ui/material_ui.dart';
 
+import '../models/app_mode.dart';
 import '../models/rescue_request.dart';
 import '../state/rescue_store.dart';
 import '../theme/mamo_theme.dart';
@@ -11,11 +12,13 @@ class AppSidebar extends StatelessWidget {
     required this.store,
     this.width = 218,
     this.onNavigate,
+    this.onSelectMode,
   });
 
   final RescueStore store;
   final double width;
   final VoidCallback? onNavigate;
+  final ValueChanged<MamoAppMode>? onSelectMode;
 
   @override
   Widget build(BuildContext context) {
@@ -68,6 +71,77 @@ class AppSidebar extends StatelessWidget {
                       ],
                     ),
                   ),
+                  if (onSelectMode != null) ...[
+                    const SizedBox(height: 16),
+                    Container(
+                      padding: const EdgeInsets.only(top: 14),
+                      decoration: BoxDecoration(
+                        border: Border(
+                          top: BorderSide(
+                            color: Colors.white.withValues(alpha: 0.2),
+                          ),
+                        ),
+                      ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          OutlinedButton(
+                            onPressed: () {
+                              onNavigate?.call();
+                              onSelectMode!(MamoAppMode.portal);
+                            },
+                            style: OutlinedButton.styleFrom(
+                              foregroundColor: Colors.white,
+                              side: BorderSide(
+                                color: Colors.white.withValues(alpha: 0.45),
+                              ),
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 10,
+                                vertical: 10,
+                              ),
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(7),
+                              ),
+                            ),
+                            child: const Text(
+                              'ポータル',
+                              style: TextStyle(
+                                fontSize: 13,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          ),
+                          const SizedBox(height: 8),
+                          OutlinedButton(
+                            onPressed: () {
+                              onNavigate?.call();
+                              onSelectMode!(MamoAppMode.citizen);
+                            },
+                            style: OutlinedButton.styleFrom(
+                              foregroundColor: Colors.white,
+                              side: BorderSide(
+                                color: Colors.white.withValues(alpha: 0.45),
+                              ),
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 10,
+                                vertical: 10,
+                              ),
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(7),
+                              ),
+                            ),
+                            child: const Text(
+                              '利用者',
+                              style: TextStyle(
+                                fontSize: 13,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
                 ],
               ),
             ),

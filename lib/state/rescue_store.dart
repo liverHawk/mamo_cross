@@ -2,97 +2,9 @@ import 'dart:async';
 
 import 'package:material_ui/material_ui.dart';
 
+import '../models/citizen_models.dart';
 import '../models/rescue_request.dart';
 import '../services/rescue_data_source.dart';
-
-/// 初期デモデータ（mamo/app/composables/useRescueData.ts と同一）
-const List<RescueRequest> _initialRequests = [
-  RescueRequest(
-    id: 'mamo-0005',
-    time: '10:24:35',
-    name: '山田 太郎',
-    age: 32,
-    gender: '男性',
-    agency: AgencyType.emergency,
-    location: '山口県山口市亀山町2-1付近',
-    distance: '約120m先',
-    content: '転倒して足を痛めて動けません。意識はあります。早急に救助をお願いします。',
-    consideration: 'ホルモン治療中',
-    latPercent: 24,
-    topPercent: 28,
-    latitude: 34.1785,
-    longitude: 131.4737,
-    status: RequestStatus.pending,
-  ),
-  RescueRequest(
-    id: 'mamo-0004',
-    time: '10:21:18',
-    name: '佐藤 花子',
-    age: 45,
-    gender: '女性',
-    agency: AgencyType.fire,
-    location: '山口県下関市南部町1-1付近',
-    distance: '約550m先',
-    content: '建物内に取り残されています。',
-    consideration: '医療的ケアが必要',
-    latPercent: 48,
-    topPercent: 55,
-    latitude: 33.9578,
-    longitude: 130.9415,
-    status: RequestStatus.pending,
-  ),
-  RescueRequest(
-    id: 'mamo-0003',
-    time: '10:18:59',
-    name: '鈴木 一郎',
-    age: 28,
-    gender: '男性',
-    agency: AgencyType.sdf,
-    location: '山口県萩市大字江向510付近',
-    distance: '約1.2km先',
-    content: '道路が塞がれて移動できません。',
-    consideration: 'なし',
-    latPercent: 67,
-    topPercent: 31,
-    latitude: 34.4081,
-    longitude: 131.3991,
-    status: RequestStatus.pending,
-  ),
-  RescueRequest(
-    id: 'mamo-0002',
-    time: '10:15:42',
-    name: '田中 美咲',
-    age: 36,
-    gender: '女性',
-    agency: AgencyType.police,
-    location: '山口県宇部市常盤町1-7-1付近',
-    distance: '約2.5km先',
-    content: '家族と連絡が取れず避難場所から動けません。',
-    consideration: '妊娠中',
-    latPercent: 37,
-    topPercent: 72,
-    latitude: 33.9516,
-    longitude: 131.2468,
-    status: RequestStatus.working,
-  ),
-  RescueRequest(
-    id: 'mamo-0001',
-    time: '10:10:08',
-    name: '高橋 健',
-    age: 52,
-    gender: '男性',
-    agency: AgencyType.fire,
-    location: '山口県岩国市今津町1-14-51付近',
-    distance: '約3.8km先',
-    content: '自宅周辺が浸水しています。救助をお願いします。',
-    consideration: '人工呼吸器使用',
-    latPercent: 78,
-    topPercent: 60,
-    latitude: 34.1666,
-    longitude: 132.2200,
-    status: RequestStatus.working,
-  ),
-];
 
 /// MAMO アプリ全体の状態管理ストア
 class RescueStore extends ChangeNotifier {
@@ -100,7 +12,7 @@ class RescueStore extends ChangeNotifier {
     bool startClock = true,
     this.dataSource,
     bool autoInitialize = true,
-  }) : _requests = List<RescueRequest>.of(_initialRequests) {
+  }) : _requests = <RescueRequest>[] {
     _updateClockValue();
     if (startClock) {
       _clockTimer = Timer.periodic(const Duration(seconds: 1), (_) {
@@ -119,7 +31,7 @@ class RescueStore extends ChangeNotifier {
   AgencyType? _currentAgencyFilter;
   RequestStatus? _statusFilter;
   final List<RescueRequest> _requests;
-  String _selectedId = 'mamo-0005';
+  String _selectedId = '';
   String _municipalityName = '山口県 災害対策本部';
   bool _realtimeNotification = true;
   String _currentTime = '';
@@ -274,33 +186,47 @@ class RescueStore extends ChangeNotifier {
       return false;
     }
 
-    var mergedReq = req;
-    final localMatchIndex = _requests.indexWhere(
-      (v) => v.dbId == null && v.id == req.id,
-    );
-    if (localMatchIndex != -1) {
-      final existingLocal = _requests.removeAt(localMatchIndex);
-      final parsedCoords = RescueRequest.parseCoordinates(row);
-      mergedReq = req.copyWith(
-        age: req.age != 0 ? req.age : existingLocal.age,
-        gender: req.gender.isNotEmpty ? req.gender : existingLocal.gender,
-        latPercent: existingLocal.latPercent,
-        topPercent: existingLocal.topPercent,
-        latitude: parsedCoords?.latitude ?? existingLocal.latitude,
-        longitude: parsedCoords?.longitude ?? existingLocal.longitude,
-      );
-    } else if (req.dbId != null &&
-        _requests.any((v) => v.id == mergedReq.id)) {
-      mergedReq = mergedReq.copyWith(id: '${mergedReq.id}#${req.dbId}');
+    final rawRequestId = row['request_id']?.toString().trim() ?? '';
+    if (rawRequestId.isNotEmpty &&
+        req.dbId == null &&
+        _requests.any((v) => v.id == req.id)) {
+      return false;
     }
 
-    _requests.insert(0, mergedReq);
-    _selectedId = mergedReq.id;
+    if (req.dbId != null && rawRequestId.isNotEmpty) {
+      final localIndex = _requests.indexWhere(
+        (v) => v.dbId == null && v.id == req.id,
+      );
+      if (localIndex != -1) {
+        final localReq = _requests[localIndex];
+        _requests[localIndex] = localReq.copyWith(dbId: req.dbId);
+        notifyListeners();
+        final ds = dataSource;
+        if (ds != null && localReq.status != req.status) {
+          unawaited(
+            Future<void>.sync(
+              () => ds.updateStatus(dbId: req.dbId!, status: localReq.status),
+            ).catchError((Object e) {
+              debugPrint('MAMO追送ステータス更新エラー: $e');
+            }),
+          );
+        }
+        return false;
+      }
+    }
+
+    var nextReq = req;
+    if (req.dbId != null && _requests.any((v) => v.id == nextReq.id)) {
+      nextReq = nextReq.copyWith(id: '${nextReq.id}#${req.dbId}');
+    }
+
+    _requests.insert(0, nextReq);
+    _selectedId = nextReq.id;
     notifyListeners();
     if (notifyAlert &&
         _realtimeNotification &&
         !_incomingAlertController.isClosed) {
-      _incomingAlertController.add(mergedReq);
+      _incomingAlertController.add(nextReq);
     }
     return true;
   }
@@ -322,9 +248,12 @@ class RescueStore extends ChangeNotifier {
       [row['requester_name'], row['user_name']],
       existing.name,
     );
-    final rawRequestType = row['request_type']?.toString().trim();
-    final nextAgency = (rawRequestType != null && rawRequestType.isNotEmpty)
-        ? RescueRequest.parseAgency(rawRequestType)
+    final rawAgency = _pickUpdatedText(
+      [row['assigned_agency'], row['request_type']],
+      '',
+    );
+    final nextAgency = rawAgency.isNotEmpty
+        ? RescueRequest.parseAgency(rawAgency)
         : existing.agency;
     final nextLocation = _pickUpdatedText(
       [row['location_text'], row['location']],
@@ -342,7 +271,14 @@ class RescueStore extends ChangeNotifier {
       [row['considerations'], row['health_condition'], row['consideration']],
       existing.consideration,
     );
-    final nextCoords = RescueRequest.parseCoordinates(row);
+    final nextLatPercent = _parseRemotePercent(
+      row['lat_percent'],
+      existing.latPercent,
+    );
+    final nextTopPercent = _parseRemotePercent(
+      row['top_percent'],
+      existing.topPercent,
+    );
 
     _requests[index] = existing.copyWith(
       status: nextStatus,
@@ -352,10 +288,23 @@ class RescueStore extends ChangeNotifier {
       distance: nextDistance,
       content: nextContent,
       consideration: nextConsideration,
-      latitude: nextCoords?.latitude,
-      longitude: nextCoords?.longitude,
+      latPercent: nextLatPercent,
+      topPercent: nextTopPercent,
     );
     notifyListeners();
+  }
+
+  static double _parseRemotePercent(Object? value, double fallback) {
+    if (value is num && value.isFinite) {
+      return value.toDouble();
+    }
+    if (value != null) {
+      final parsed = double.tryParse(value.toString().trim());
+      if (parsed != null && parsed.isFinite) {
+        return parsed;
+      }
+    }
+    return fallback;
   }
 
   static String _pickUpdatedText(List<Object?> candidates, String fallback) {
@@ -429,5 +378,126 @@ class RescueStore extends ChangeNotifier {
     unawaited(_realtimeSubscription?.cancel());
     unawaited(_incomingAlertController.close());
     super.dispose();
+  }
+
+  /// 利用者（住民・スマホ）側から送信された救助要請を即時ローカル反映し、
+  /// 設定済み・オンライン時は Supabase (`public.rescue_requests`) へ登録する。
+  Future<RescueRequest> submitCitizenRequest({
+    required String requesterName,
+    required String rescueDetails,
+    required String considerations,
+    String locationText = '〇〇地区付近',
+    String distanceText = '約150m先（デモ）',
+  }) async {
+    final now = DateTime.now();
+    final normalizedName =
+        requesterName.trim().isEmpty ? 'あなた' : requesterName.trim();
+    final normalizedDetails =
+        rescueDetails.trim().isEmpty ? '救助が必要です' : rescueDetails.trim();
+    final normalizedConsiderations =
+        considerations.trim().isEmpty ? 'なし' : considerations.trim();
+    final normalizedLocation =
+        locationText.trim().isEmpty ? '〇〇地区付近' : locationText.trim();
+    final normalizedDistance =
+        distanceText.trim().isEmpty ? '約150m先（デモ）' : distanceText.trim();
+
+    final requestId = _nextCitizenRequestId(now);
+    final localRequest = RescueRequest(
+      id: requestId,
+      time: _formatClockTime(now),
+      name: normalizedName,
+      age: 0,
+      gender: '',
+      agency: AgencyType.emergency,
+      location: normalizedLocation,
+      distance: normalizedDistance,
+      content: normalizedDetails,
+      consideration: normalizedConsiderations,
+      latPercent: 50.0,
+      topPercent: 50.0,
+      status: RequestStatus.pending,
+    );
+
+    if (_disposed) return localRequest;
+
+    _requests.insert(0, localRequest);
+    _selectedId = localRequest.id;
+    notifyListeners();
+
+    final ds = dataSource;
+    if (ds == null) {
+      return localRequest;
+    }
+
+    final payload = buildCitizenRescuePayload(
+      requestId: requestId,
+      createdAt: now,
+      requesterName: normalizedName,
+      rescueDetails: normalizedDetails,
+      considerations: normalizedConsiderations,
+      locationText: normalizedLocation,
+      distanceText: normalizedDistance,
+      requestType: '救助要請',
+      status: RequestStatus.pending.label,
+    );
+
+    Map<String, dynamic>? insertedRow;
+    try {
+      insertedRow = await ds.insertRequest(payload);
+    } catch (e) {
+      debugPrint('MAMO市民救助要請送信エラー: $e');
+    }
+
+    if (_disposed || insertedRow == null) {
+      return localRequest;
+    }
+
+    final rawDbId = insertedRow['id']?.toString().trim();
+    final insertedDbId =
+        (rawDbId != null && rawDbId.isNotEmpty) ? rawDbId : null;
+    if (insertedDbId == null) {
+      return localRequest;
+    }
+
+    final index = _requests.indexWhere(
+      (v) => v.id == requestId || v.dbId == insertedDbId,
+    );
+    if (index == -1) {
+      return localRequest;
+    }
+
+    final current = _requests[index];
+    if (current.dbId == null) {
+      final reconciled = current.copyWith(dbId: insertedDbId);
+      _requests[index] = reconciled;
+      notifyListeners();
+      final remoteStatus = insertedRow['status'] != null
+          ? RescueRequest.parseStatus(insertedRow['status'])
+          : RequestStatus.pending;
+      if (reconciled.status != remoteStatus) {
+        try {
+          await ds.updateStatus(dbId: insertedDbId, status: reconciled.status);
+        } catch (e) {
+          debugPrint('MAMO追送ステータス更新エラー: $e');
+        }
+      }
+      return reconciled;
+    }
+    return current;
+  }
+
+  String _nextCitizenRequestId(DateTime now) {
+    var ms = now.millisecondsSinceEpoch;
+    while (_requests.any((r) => r.id == 'MAMO-$ms')) {
+      ms++;
+    }
+    return 'MAMO-$ms';
+  }
+
+  static String _formatClockTime(DateTime dt) {
+    final h = dt.hour.toString().padLeft(2, '0');
+    final m = dt.minute.toString().padLeft(2, '0');
+    final s = dt.second.toString().padLeft(2, '0');
+    return '$h:$m:$s';
   }
 }
