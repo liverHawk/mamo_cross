@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mamo_cross/config/supabase_config.dart';
 import 'package:mamo_cross/models/citizen_models.dart';
@@ -1160,6 +1161,91 @@ void main() {
           signOutFuture.timeout(const Duration(seconds: 5)),
           completes,
         );
+      },
+    );
+
+    test(
+      'clientResolver synchronous exception guards currentUserId, isAuthenticated, and userIdChanges without crashing',
+      () async {
+        final originalDebugPrint = debugPrint;
+        final logs = <String>[];
+        debugPrint = (String? message, {int? wrapWidth}) {
+          if (message != null) {
+            logs.add(message);
+          }
+        };
+        addTearDown(() => debugPrint = originalDebugPrint);
+
+        final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+        addTearDown(server.close);
+
+        server.listen((HttpRequest req) async {
+          await utf8.decoder.bind(req).drain<void>();
+          if (req.method == 'POST' && req.uri.path == '/auth/v1/signup') {
+            req.response
+              ..statusCode = HttpStatus.ok
+              ..headers.contentType = ContentType.json
+              ..write(jsonEncode(_fakeAuthSessionPayload('anon-recovered')));
+            await req.response.close();
+            return;
+          }
+          req.response.statusCode = HttpStatus.notFound;
+          await req.response.close();
+        });
+
+        final client = SupabaseClient(
+          'http://127.0.0.1:${server.port}',
+          SupabaseConfig.exhibition.publishableKey,
+          authOptions: const AuthClientOptions(autoRefreshToken: false),
+        );
+        addTearDown(client.dispose);
+
+        var shouldThrow = true;
+        final authService = SupabaseAuthService(
+          clientResolver: () {
+            if (shouldThrow) {
+              throw StateError('sync resolver boom');
+            }
+            return client;
+          },
+        );
+        addTearDown(authService.dispose);
+
+        // 例外送出中でも currentUserId / isAuthenticated / userIdChanges が安全に完了する
+        expect(authService.currentUserId, isNull);
+        expect(authService.isAuthenticated, isFalse);
+
+        final emitted = <String?>[];
+        final doneCompleter = Completer<void>();
+        final sub = authService.userIdChanges.listen(
+          emitted.add,
+          onDone: () {
+            if (!doneCompleter.isCompleted) doneCompleter.complete();
+          },
+        );
+        addTearDown(sub.cancel);
+
+        expect(
+          logs.where((m) => m.contains('MAMO 認証クライアント解決エラー')),
+          hasLength(3),
+        );
+
+        // リゾルバ回復後は通常通りセッション確立・getter/stream 反映される
+        shouldThrow = false;
+        expect(
+          await authService
+              .ensureAnonymousSession()
+              .timeout(const Duration(seconds: 2)),
+          'anon-recovered',
+        );
+        await pumpEventQueue(times: 20);
+
+        expect(authService.currentUserId, 'anon-recovered');
+        expect(authService.isAuthenticated, isTrue);
+        expect(emitted, contains('anon-recovered'));
+
+        authService.dispose();
+        await doneCompleter.future.timeout(const Duration(seconds: 2));
       },
     );
   });

@@ -799,6 +799,54 @@ void main() {
         expect(store.currentScreen, CitizenScreen.home);
       },
     );
+
+    test(
+      'CitizenStore.initializeRemote and auth-dependent actions survive throwing clientResolver without crashing',
+      () async {
+        final originalDebugPrint = debugPrint;
+        final loggedMessages = <String>[];
+        debugPrint = (String? message, {int? wrapWidth}) {
+          if (message != null) {
+            loggedMessages.add(message);
+          }
+        };
+        addTearDown(() => debugPrint = originalDebugPrint);
+
+        final ds = _MockCitizenDataSource();
+        final auth = SupabaseAuthService(
+          clientResolver: () => throw StateError('resolver crash'),
+        );
+        final store = CitizenStore(
+          dataSource: ds,
+          authService: auth,
+          autoInitialize: false,
+        );
+        addTearDown(() {
+          store.dispose();
+          auth.dispose();
+        });
+
+        expect(auth.currentUserId, isNull);
+        expect(auth.isAuthenticated, isFalse);
+
+        await expectLater(store.initializeRemote(), completes);
+        expect(store.shelters.first.name, 'DB避難所A');
+        expect(store.hazardSpots.first.title, 'DB危険箇所');
+        expect(store.municipalityNotices.first.body, 'DBからの避難情報テスト');
+
+        expect(await store.saveProfileEdits(name: 'テスト'), isFalse);
+        store.updateMySafety(CitizenSafetyStatus.damaged);
+        await pumpEventQueue(times: 20);
+        expect(await store.joinFamilyGroup('JOIN77'), isFalse);
+        store.sendMessage('テスト送信');
+        await pumpEventQueue(times: 20);
+
+        expect(
+          loggedMessages.any((m) => m.contains('MAMO 認証クライアント解決エラー')),
+          isTrue,
+        );
+      },
+    );
   });
 
   group('RescueStore.applyRemoteUpdate', () {
