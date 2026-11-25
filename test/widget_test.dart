@@ -48,6 +48,46 @@ class _FakeMemoryTileProvider extends TileProvider {
   }
 }
 
+class _CountingTileProvider extends TileProvider {
+  _CountingTileProvider()
+      : _image = MemoryImage(Uint8List.fromList(_testTransparentPng));
+
+  final ImageProvider _image;
+  int disposeCount = 0;
+
+  @override
+  ImageProvider getImage(TileCoordinates coordinates, TileLayer options) {
+    return _image;
+  }
+
+  @override
+  void dispose() {
+    disposeCount++;
+    super.dispose();
+  }
+}
+
+class _CoordinateFakeRescueDataSource extends FakeRescueDataSource {
+  _CoordinateFakeRescueDataSource({
+    this.onInsert,
+  });
+
+  final Future<Map<String, dynamic>?> Function(Map<String, dynamic> payload)?
+      onInsert;
+  final List<Map<String, dynamic>> insertedPayloads = [];
+
+  @override
+  Future<Map<String, dynamic>?> insertRequest(
+    Map<String, dynamic> payload,
+  ) async {
+    insertedPayloads.add(Map<String, dynamic>.from(payload));
+    if (onInsert != null) {
+      return onInsert!(payload);
+    }
+    return null;
+  }
+}
+
 class FakeRescueDataSource implements RescueDataSource {
   FakeRescueDataSource({
     this.initialRows = const [],
@@ -1342,7 +1382,7 @@ void main() {
       );
     });
 
-    test('resolves coordinates from Yamaguchi city names with prefectural default fallback', () {
+    test('resolves coordinates from Yamaguchi city and town names with prefectural default fallback', () {
       final hofu = RescueRequest.fromSupabaseRow({
         'id': 12,
         'request_id': 'MAMO-12',
@@ -1350,6 +1390,30 @@ void main() {
       });
       expect(hofu.latitude, closeTo(34.0558, 0.0001));
       expect(hofu.longitude, closeTo(131.5646, 0.0001));
+
+      const expectedTownCoords = <String, ({double lat, double lng})>{
+        '周防大島町': (lat: 33.9276, lng: 132.1952),
+        '和木町': (lat: 34.2024, lng: 132.2202),
+        '上関町': (lat: 33.8309, lng: 132.1104),
+        '田布施町': (lat: 33.9547, lng: 132.0414),
+        '平生町': (lat: 33.9379, lng: 132.0732),
+        '阿武町': (lat: 34.5033, lng: 131.4714),
+      };
+      for (final entry in expectedTownCoords.entries) {
+        final resolved = RescueRequest.resolveCoordinatesFromLocation(
+          '山口県${entry.key}役場付近',
+        );
+        expect(resolved.latitude, closeTo(entry.value.lat, 0.0001));
+        expect(resolved.longitude, closeTo(entry.value.lng, 0.0001));
+
+        final rowModel = RescueRequest.fromSupabaseRow({
+          'id': 20,
+          'request_id': 'MAMO-TOWN-${entry.key}',
+          'location_text': '山口県${entry.key}1-1',
+        });
+        expect(rowModel.latitude, closeTo(entry.value.lat, 0.0001));
+        expect(rowModel.longitude, closeTo(entry.value.lng, 0.0001));
+      }
 
       final unknown = RescueRequest.fromSupabaseRow({
         'id': 13,
@@ -1361,24 +1425,14 @@ void main() {
     });
 
     test('preserves local coordinates on DB merge without explicit coords and updates on remote coord change', () async {
-      final ds = FakeRescueDataSource(
-        initialRows: [
-          {
-            'id': 1,
-            'request_id': 'mamo-0005',
-            'user_name': '山田 太郎',
-            'location': '住所テキストのみ',
-            'status': '未対応',
-          },
-          {
-            'id': 2,
-            'request_id': 'mamo-0004',
-            'user_name': '佐藤 花子',
-            'latitude': 34.0123,
-            'longitude': 131.1234,
-            'status': '未対応',
-          },
-        ],
+      final completer1 = Completer<Map<String, dynamic>?>();
+      final completer2 = Completer<Map<String, dynamic>?>();
+      var callCount = 0;
+      final ds = _CoordinateFakeRescueDataSource(
+        onInsert: (_) {
+          callCount++;
+          return callCount == 1 ? completer1.future : completer2.future;
+        },
       );
       final store = RescueStore(
         startClock: false,
@@ -1389,29 +1443,177 @@ void main() {
 
       await store.initializeRealtime();
 
-      // DB行に座標がない場合はローカル初期値の山口市座標を引き継ぐ
-      final mamo5 = store.requests.firstWhere((r) => r.id == 'mamo-0005');
-      expect(mamo5.latitude, closeTo(34.1785, 0.0001));
-      expect(mamo5.longitude, closeTo(131.4737, 0.0001));
+      // 1件目: 山口市の住所からローカル座標が解決される（dbId 未確定）
+      final f1 = store.submitCitizenRequest(
+        requesterName: '山田 太郎',
+        rescueDetails: '救助要請1',
+        considerations: 'なし',
+        locationText: '山口県山口市亀山町2-1付近',
+      );
+      final localReq1 = store.requests.first;
+      expect(localReq1.latitude, closeTo(34.1785, 0.0001));
+      expect(localReq1.longitude, closeTo(131.4737, 0.0001));
 
-      // DB行に明示座標がある場合はDB座標を採用する
-      final mamo4 = store.requests.firstWhere((r) => r.id == 'mamo-0004');
-      expect(mamo4.latitude, closeTo(34.0123, 0.0001));
-      expect(mamo4.longitude, closeTo(131.1234, 0.0001));
+      // 2件目: 下関市の住所からローカル座標が解決される
+      await Future<void>.delayed(const Duration(milliseconds: 2));
+      final f2 = store.submitCitizenRequest(
+        requesterName: '佐藤 花子',
+        rescueDetails: '救助要請2',
+        considerations: 'なし',
+        locationText: '山口県下関市南部町1-1付近',
+      );
+      final localReq2 = store.requests.first;
+      expect(localReq2.id, isNot(localReq1.id));
 
-      // applyRemoteUpdate: 座標付き UPDATE で更新、座標なし UPDATE で保持
-      ds.emitUpdate({'id': 1, 'latitude': 34.2222, 'longitude': 131.5555});
+      // 1件目 Realtime INSERT（座標なし）→ ローカルの山口市座標を引き継ぐ
+      ds.emitInsert({
+        'id': 1,
+        'request_id': localReq1.id,
+        'user_name': '山田 太郎',
+        'location': '住所テキストのみ',
+        'status': '未対応',
+      });
+      // 2件目 Realtime INSERT（明示座標あり）→ DB座標を採用する
+      ds.emitInsert({
+        'id': 2,
+        'request_id': localReq2.id,
+        'user_name': '佐藤 花子',
+        'latitude': 34.0123,
+        'longitude': 131.1234,
+        'status': '未対応',
+      });
+      await pumpEventQueue();
+
+      completer1.complete({'id': 1, 'request_id': localReq1.id, 'status': '未対応'});
+      completer2.complete({
+        'id': 2,
+        'request_id': localReq2.id,
+        'latitude': 34.0123,
+        'longitude': 131.1234,
+        'status': '未対応',
+      });
+      await Future.wait([f1, f2]);
+
+      final merged1 = store.requests.firstWhere((r) => r.id == localReq1.id);
+      expect(merged1.dbId, '1');
+      expect(merged1.latitude, closeTo(34.1785, 0.0001));
+      expect(merged1.longitude, closeTo(131.4737, 0.0001));
+
+      final merged2 = store.requests.firstWhere((r) => r.id == localReq2.id);
+      expect(merged2.dbId, '2');
+      expect(merged2.latitude, closeTo(34.0123, 0.0001));
+      expect(merged2.longitude, closeTo(131.1234, 0.0001));
+
+      // applyRemoteUpdate: 座標・assigned_agency・lat_percent・top_percent 更新、座標なし UPDATE で保持
+      ds.emitUpdate({
+        'id': 1,
+        'latitude': 34.2222,
+        'longitude': 131.5555,
+        'assigned_agency': '消防',
+        'lat_percent': 33.5,
+        'top_percent': 44.5,
+      });
       ds.emitUpdate({'id': 2, 'status': '対応中'});
       await pumpEventQueue();
 
-      final updated5 = store.requests.firstWhere((r) => r.dbId == '1');
-      expect(updated5.latitude, closeTo(34.2222, 0.0001));
-      expect(updated5.longitude, closeTo(131.5555, 0.0001));
+      final updated1 = store.requests.firstWhere((r) => r.dbId == '1');
+      expect(updated1.latitude, closeTo(34.2222, 0.0001));
+      expect(updated1.longitude, closeTo(131.5555, 0.0001));
+      expect(updated1.agency, AgencyType.fire);
+      expect(updated1.latPercent, 33.5);
+      expect(updated1.topPercent, 44.5);
 
-      final updated4 = store.requests.firstWhere((r) => r.dbId == '2');
-      expect(updated4.status, RequestStatus.working);
-      expect(updated4.latitude, closeTo(34.0123, 0.0001));
-      expect(updated4.longitude, closeTo(131.1234, 0.0001));
+      final updated2 = store.requests.firstWhere((r) => r.dbId == '2');
+      expect(updated2.status, RequestStatus.working);
+      expect(updated2.latitude, closeTo(34.0123, 0.0001));
+      expect(updated2.longitude, closeTo(131.1234, 0.0001));
+    });
+
+    test('submitCitizenRequest resolves local coordinates, keeps 15-col payload, and syncs insertedRow coordinates', () async {
+      // パス1: insertRequest が明示座標付き行を返却
+      final ds = _CoordinateFakeRescueDataSource(
+        onInsert: (payload) async => {
+          'id': 99,
+          'request_id': payload['request_id'],
+          'latitude': 33.9301,
+          'longitude': 132.2012,
+          'status': '未対応',
+        },
+      );
+      final store = RescueStore(
+        startClock: false,
+        dataSource: ds,
+        autoInitialize: false,
+      );
+      addTearDown(store.dispose);
+
+      final future = store.submitCitizenRequest(
+        requesterName: '大島 太郎',
+        rescueDetails: '浸水しています',
+        considerations: 'なし',
+        locationText: '山口県周防大島町小松付近',
+      );
+
+      // 即時ローカル反映時点で周防大島町の代表座標に解決されていること
+      expect(store.requests, hasLength(1));
+      expect(store.requests.first.latitude, closeTo(33.9276, 0.0001));
+      expect(store.requests.first.longitude, closeTo(132.1952, 0.0001));
+
+      final reconciled = await future;
+      // buildCitizenRescuePayload の厳密 15 カラム契約を維持していること
+      expect(ds.insertedPayloads, hasLength(1));
+      final sentKeys = ds.insertedPayloads.first.keys.toSet();
+      expect(sentKeys, hasLength(15));
+      expect(sentKeys.contains('latitude'), isFalse);
+      expect(sentKeys.contains('longitude'), isFalse);
+
+      // insertedRow の明示座標へ同期されること
+      expect(reconciled.dbId, '99');
+      expect(reconciled.latitude, closeTo(33.9301, 0.0001));
+      expect(reconciled.longitude, closeTo(132.2012, 0.0001));
+      expect(store.requests.first.latitude, closeTo(33.9301, 0.0001));
+      expect(store.requests.first.longitude, closeTo(132.2012, 0.0001));
+
+      // パス2: Realtime INSERT（座標なし）先着後に insertedRow（座標あり）が返る経路
+      final completer = Completer<Map<String, dynamic>?>();
+      final dsRealtimeFirst = _CoordinateFakeRescueDataSource(
+        onInsert: (_) => completer.future,
+      );
+      final store2 = RescueStore(
+        startClock: false,
+        dataSource: dsRealtimeFirst,
+        autoInitialize: false,
+      );
+      addTearDown(store2.dispose);
+      await store2.initializeRealtime();
+
+      final f2 = store2.submitCitizenRequest(
+        requesterName: '阿武 花子',
+        rescueDetails: '救助要請',
+        considerations: 'なし',
+        locationText: '山口県阿武町奈古付近',
+      );
+      final reqId2 = store2.requests.first.id;
+      dsRealtimeFirst.emitInsert({
+        'id': 100,
+        'request_id': reqId2,
+        'user_name': '阿武 花子',
+        'status': '未対応',
+      });
+      await pumpEventQueue();
+      expect(store2.requests.first.dbId, '100');
+      expect(store2.requests.first.latitude, closeTo(34.5033, 0.0001));
+
+      completer.complete({
+        'id': 100,
+        'request_id': reqId2,
+        'latitude': 34.5100,
+        'longitude': 131.4800,
+        'status': '未対応',
+      });
+      final synced2 = await f2;
+      expect(synced2.latitude, closeTo(34.5100, 0.0001));
+      expect(synced2.longitude, closeTo(131.4800, 0.0001));
     });
   });
 
@@ -1419,8 +1621,57 @@ void main() {
     testWidgets(
       'renders GSI pale tile URL, attribution, 5 pins, pin tap callback, and zoom/fit controls',
       (tester) async {
-        final store = RescueStore(startClock: false);
+        final ds = FakeRescueDataSource(
+          initialRows: [
+            {
+              'id': 5,
+              'request_id': 'mamo-0001',
+              'user_name': '高橋 健',
+              'request_type': '消防',
+              'location': '山口県岩国市今津町1-14-51付近',
+              'status': '対応中',
+            },
+            {
+              'id': 4,
+              'request_id': 'mamo-0002',
+              'user_name': '田中 美咲',
+              'request_type': '警察',
+              'location': '山口県宇部市常盤町1-7-1付近',
+              'status': '対応中',
+            },
+            {
+              'id': 3,
+              'request_id': 'mamo-0003',
+              'user_name': '鈴木 一郎',
+              'request_type': '自衛隊',
+              'location': '山口県萩市大字江向510付近',
+              'status': '未対応',
+            },
+            {
+              'id': 2,
+              'request_id': 'mamo-0004',
+              'user_name': '佐藤 花子',
+              'request_type': '消防',
+              'location': '山口県下関市南部町1-1付近',
+              'status': '未対応',
+            },
+            {
+              'id': 1,
+              'request_id': 'mamo-0005',
+              'user_name': '山田 太郎',
+              'request_type': '救急',
+              'location': '山口県山口市亀山町2-1付近',
+              'status': '未対応',
+            },
+          ],
+        );
+        final store = RescueStore(
+          startClock: false,
+          dataSource: ds,
+          autoInitialize: false,
+        );
         addTearDown(store.dispose);
+        await store.initializeRealtime();
 
         String? tappedId;
         await tester.pumpWidget(
@@ -1442,18 +1693,28 @@ void main() {
         );
         await tester.pumpAndSettle();
 
-        // 国土地理院 淡色地図タイル URL と出典表示の確認
+        // 国土地理院 淡色地図タイル URL・UA・エラーキャッシュ設定・出典表示の確認
         final tileLayer = tester.widget<TileLayer>(find.byType(TileLayer));
         expect(tileLayer.urlTemplate, GsiMapView.gsiPaleTileUrl);
         expect(
           tileLayer.urlTemplate,
           'https://cyberjapandata.gsi.go.jp/xyz/pale/{z}/{x}/{y}.png',
         );
+        expect(
+          tileLayer.tileProvider.headers['User-Agent'],
+          'flutter_map (${GsiMapView.userAgentPackageName})',
+        );
+        expect(
+          tileLayer.evictErrorTileStrategy,
+          EvictErrorTileStrategy.notVisible,
+        );
         expect(find.text('出典：国土地理院（地理院タイル・淡色地図）'), findsOneWidget);
 
-        // 5件のマーカーが描画され、タップで該当IDが通知されること
+        // 5件のマーカーが先端アライメントで描画され、タップで該当IDが通知されること
         final markerLayer = tester.widget<MarkerLayer>(find.byType(MarkerLayer));
         expect(markerLayer.markers.length, 5);
+        expect(markerLayer.markers.first.alignment, isNotNull);
+        expect(markerLayer.markers.first.alignment!.y, lessThan(0));
 
         await tester.tap(
           find.byWidgetPredicate(
@@ -1485,7 +1746,13 @@ void main() {
     testWidgets('fit-all handles 0 requests, 1 request, and coincident requests safely', (
       tester,
     ) async {
-      final base = RescueStore(startClock: false).requests.first;
+      final base = RescueRequest.fromSupabaseRow({
+        'id': 1,
+        'request_id': 'mamo-0005',
+        'user_name': '山田 太郎',
+        'location': '山口県山口市亀山町2-1付近',
+        'status': '未対応',
+      });
 
       // 0件
       await tester.pumpWidget(
@@ -1560,8 +1827,33 @@ void main() {
         tester.view.resetDevicePixelRatio();
       });
 
-      final ds = FakeRescueDataSource();
-      await tester.pumpWidget(MamoApp(dataSource: ds, startClock: false));
+      final ds = FakeRescueDataSource(
+        initialRows: [
+          {
+            'id': 2,
+            'request_id': 'mamo-0004',
+            'user_name': '佐藤 花子',
+            'request_type': '消防',
+            'location': '山口県下関市南部町1-1付近',
+            'status': '未対応',
+          },
+          {
+            'id': 1,
+            'request_id': 'mamo-0005',
+            'user_name': '山田 太郎',
+            'request_type': '救急',
+            'location': '山口県山口市亀山町2-1付近',
+            'status': '未対応',
+          },
+        ],
+      );
+      await tester.pumpWidget(
+        MamoApp(
+          dataSource: ds,
+          startClock: false,
+          initialMode: MamoAppMode.municipality,
+        ),
+      );
       await tester.pumpAndSettle();
 
       await tester.tap(
@@ -1583,6 +1875,175 @@ void main() {
 
       expect(find.byType(RequestsView), findsOneWidget);
       expect(find.text('ID：mamo-0004'), findsOneWidget);
+    });
+
+    testWidgets('reuses default NetworkTileProvider across parent rebuilds and switches tileProvider safely', (
+      tester,
+    ) async {
+      final tick = ValueNotifier<int>(0);
+      addTearDown(tick.dispose);
+
+      Widget buildHarness({TileProvider? tileProvider}) {
+        return MaterialApp(
+          home: Scaffold(
+            body: SizedBox(
+              width: 600,
+              height: 300,
+              child: ListenableBuilder(
+                listenable: tick,
+                builder: (context, _) {
+                  return GsiMapView(
+                    requests: const [],
+                    height: 300,
+                    tileProvider: tileProvider,
+                    onPinTap: (_) {},
+                  );
+                },
+              ),
+            ),
+          ),
+        );
+      }
+
+      await tester.pumpWidget(buildHarness(tileProvider: null));
+      await tester.pump();
+
+      final initialProvider =
+          tester.widget<TileLayer>(find.byType(TileLayer)).tileProvider;
+      expect(initialProvider, isA<NetworkTileProvider>());
+
+      // 毎秒クロック相当の親リビルドを 5 回発生させても同一インスタンスを維持すること
+      for (var i = 1; i <= 5; i++) {
+        tick.value = i;
+        await tester.pump();
+        final currentProvider =
+            tester.widget<TileLayer>(find.byType(TileLayer)).tileProvider;
+        expect(identical(currentProvider, initialProvider), isTrue);
+      }
+
+      // 外部 TileProvider への切替 → null への復帰 → アンマウントで例外が起きないこと
+      final externalProvider = _CountingTileProvider();
+      await tester.pumpWidget(buildHarness(tileProvider: externalProvider));
+      await tester.pump();
+      expect(
+        identical(
+          tester.widget<TileLayer>(find.byType(TileLayer)).tileProvider,
+          externalProvider,
+        ),
+        isTrue,
+      );
+      expect(externalProvider.disposeCount, 0);
+
+      await tester.pumpWidget(buildHarness(tileProvider: null));
+      await tester.pump();
+      final recreatedProvider =
+          tester.widget<TileLayer>(find.byType(TileLayer)).tileProvider;
+      expect(recreatedProvider, isA<NetworkTileProvider>());
+      expect(identical(recreatedProvider, initialProvider), isFalse);
+      expect(externalProvider.disposeCount, 1);
+
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.pump();
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('guards invalid coordinates, invalid-only fit-all fallback, and zero-size layout', (
+      tester,
+    ) async {
+      expect(GsiMapView.isValidCoordinate(34.18, 131.58), isTrue);
+      expect(GsiMapView.isValidCoordinate(-90.0, 180.0), isTrue);
+      expect(GsiMapView.isValidCoordinate(90.0, -180.0), isTrue);
+      expect(GsiMapView.isValidCoordinate(double.nan, 131.58), isFalse);
+      expect(GsiMapView.isValidCoordinate(34.18, double.infinity), isFalse);
+      expect(GsiMapView.isValidCoordinate(90.1, 131.58), isFalse);
+      expect(GsiMapView.isValidCoordinate(34.18, -180.1), isFalse);
+
+      final base = RescueRequest.fromSupabaseRow({
+        'id': 1,
+        'request_id': 'mamo-valid',
+        'user_name': '正常 太郎',
+        'location': '山口県山口市亀山町2-1付近',
+        'status': '未対応',
+      });
+      final invalidRequests = <RescueRequest>[
+        base.copyWith(id: 'nan', latitude: double.nan),
+        base.copyWith(id: 'inf', longitude: double.infinity),
+        base.copyWith(id: 'lat-high', latitude: 95.0),
+        base.copyWith(id: 'lng-low', longitude: -185.0),
+      ];
+
+      // 正常1件 + 異常4件混在でも正常ピンのみ描画し fitAll がクラッシュしないこと
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: GsiMapView(
+              requests: [base, ...invalidRequests],
+              height: 300,
+              tileProvider: _FakeMemoryTileProvider(),
+              onPinTap: (_) {},
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(
+        tester.widget<MarkerLayer>(find.byType(MarkerLayer)).markers,
+        hasLength(1),
+      );
+      await tester.tap(find.byTooltip('全体を表示'));
+      await tester.pumpAndSettle();
+      expect(
+        tester.widget<FlutterMap>(find.byType(FlutterMap)).mapController!.camera.zoom,
+        closeTo(14.0, 0.01),
+      );
+
+      // 全件不正座標の場合はピン 0 件・全体表示で初期中心/初期ズームへフォールバック
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: GsiMapView(
+              requests: invalidRequests,
+              height: 300,
+              initialZoom: 8.5,
+              tileProvider: _FakeMemoryTileProvider(),
+              onPinTap: (_) {},
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(
+        tester.widget<MarkerLayer>(find.byType(MarkerLayer)).markers,
+        isEmpty,
+      );
+      await tester.tap(find.byTooltip('全体を表示'));
+      await tester.pumpAndSettle();
+      final fallbackCamera =
+          tester.widget<FlutterMap>(find.byType(FlutterMap)).mapController!.camera;
+      expect(fallbackCamera.center.latitude, closeTo(34.18, 0.01));
+      expect(fallbackCamera.center.longitude, closeTo(131.58, 0.01));
+      expect(fallbackCamera.zoom, closeTo(8.5, 0.01));
+
+      // サイズ 0 のレイアウトでも例外が発生しないこと
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: SizedBox(
+              width: 0,
+              height: 0,
+              child: GsiMapView(
+                requests: [base],
+                tileProvider: _FakeMemoryTileProvider(),
+                onPinTap: (_) {},
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pump();
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.pump();
+      expect(tester.takeException(), isNull);
     });
   });
 }
