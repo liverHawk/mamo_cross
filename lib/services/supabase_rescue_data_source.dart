@@ -1,7 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/foundation.dart';
-import 'package:supabase/supabase.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../config/supabase_config.dart';
 import '../models/rescue_request.dart';
@@ -10,7 +10,7 @@ import 'rescue_data_source.dart';
 /// Supabase (`public.rescue_requests`) に対する本番データソース実装
 class SupabaseRescueDataSource implements RescueDataSource {
   SupabaseRescueDataSource({
-    this.config = SupabaseConfig.exhibition,
+    this.config = SupabaseConfig.fromEnvironment,
     SupabaseClient? client,
   }) : _injectedClient = client;
 
@@ -33,6 +33,14 @@ class SupabaseRescueDataSource implements RescueDataSource {
       debugPrint('Supabase設定がありません');
       return null;
     }
+    try {
+      if (config.url == SupabaseConfig.fromEnvironment.url &&
+          config.publishableKey ==
+              SupabaseConfig.fromEnvironment.publishableKey &&
+          Supabase.instance.isInitialized) {
+        return Supabase.instance.client;
+      }
+    } catch (_) {}
     return _ownedClient ??= SupabaseClient(
       config.url,
       config.publishableKey,
