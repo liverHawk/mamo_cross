@@ -225,6 +225,72 @@ class CitizenRegistrationProfile {
       otherConsideration: otherConsideration ?? this.otherConsideration,
     );
   }
+
+  factory CitizenRegistrationProfile.fromSupabaseRow(Map<String, dynamic> row) {
+    final rawConsiderations = row['considerations'];
+    final considerationSet = <String>{};
+    if (rawConsiderations is Iterable) {
+      for (final item in rawConsiderations) {
+        final s = item?.toString().trim() ?? '';
+        if (s.isNotEmpty) considerationSet.add(s);
+      }
+    }
+    return CitizenRegistrationProfile(
+      name: (row['display_name'] ?? '').toString(),
+      birthDate: (row['birth_date'] ?? '').toString(),
+      bloodType: (row['blood_type'] ?? '').toString(),
+      gender: (row['gender'] ?? '').toString(),
+      postalCode: (row['postal_code'] ?? '').toString(),
+      prefecture: (row['prefecture'] ?? '').toString(),
+      addressDetail: (row['address_detail'] ?? '').toString(),
+      considerations: Set<String>.unmodifiable(considerationSet),
+      otherConsideration: (row['other_consideration'] ?? '').toString(),
+    );
+  }
+
+  Map<String, dynamic> toSupabaseUpsert(
+    String userId, {
+    required CitizenSafetyStatus safetyStatus,
+    String locationNote = '〇〇地区付近',
+  }) {
+    return <String, dynamic>{
+      'id': userId,
+      'display_name': effectiveDisplayName,
+      'birth_date': birthDate.trim(),
+      'blood_type': bloodType.trim(),
+      'gender': gender.trim(),
+      'postal_code': postalCode.trim(),
+      'prefecture': prefecture.trim(),
+      'address_detail': addressDetail.trim(),
+      'considerations': considerations.toList(),
+      'other_consideration': otherConsideration.trim(),
+      'safety_status': safetyStatus.name,
+      'location_note': locationNote.trim().isEmpty ? '〇〇地区付近' : locationNote.trim(),
+      'safety_updated_at': DateTime.now().toUtc().toIso8601String(),
+      'updated_at': DateTime.now().toUtc().toIso8601String(),
+    };
+  }
+}
+
+/// 家族グループ情報
+class FamilyGroupInfo {
+  const FamilyGroupInfo({
+    required this.id,
+    required this.name,
+    required this.inviteCode,
+  });
+
+  final String id;
+  final String name;
+  final String inviteCode;
+
+  factory FamilyGroupInfo.fromSupabaseRow(Map<String, dynamic> row) {
+    return FamilyGroupInfo(
+      id: (row['id'] ?? '').toString(),
+      name: (row['name'] ?? 'マイ家族グループ').toString(),
+      inviteCode: (row['invite_code'] ?? '').toString(),
+    );
+  }
 }
 
 /// 家族グループメンバー
@@ -264,6 +330,28 @@ class FamilyMember {
       isSelf: isSelf ?? this.isSelf,
       lastUpdated: lastUpdated ?? this.lastUpdated,
       locationNote: locationNote ?? this.locationNote,
+    );
+  }
+
+  factory FamilyMember.fromSupabaseRow(
+    Map<String, dynamic> row, {
+    String? currentUserId,
+  }) {
+    final uid = (row['user_id'] ?? '').toString();
+    final isSelf = currentUserId != null && uid == currentUserId;
+    final rawStatus = (row['safety_status'] ?? 'safe').toString();
+    final status = CitizenSafetyStatus.values.firstWhere(
+      (s) => s.name == rawStatus,
+      orElse: () => CitizenSafetyStatus.safe,
+    );
+    return FamilyMember(
+      id: (row['id'] ?? uid).toString(),
+      name: (row['display_name'] ?? (isSelf ? 'あなた' : '家族')).toString(),
+      avatar: (row['avatar'] ?? '🙂').toString(),
+      status: status,
+      isSelf: isSelf,
+      lastUpdated: _formatCitizenTime(row['safety_updated_at']),
+      locationNote: (row['location_note'] ?? '').toString(),
     );
   }
 }
@@ -332,6 +420,38 @@ class CitizenShelter {
   final List<String> facilities;
   final double xPercent;
   final double yPercent;
+
+  factory CitizenShelter.fromSupabaseRow(Map<String, dynamic> row) {
+    final rawFacilities = row['facilities'];
+    final facilities = <String>[];
+    if (rawFacilities is Iterable) {
+      for (final f in rawFacilities) {
+        final s = f?.toString().trim() ?? '';
+        if (s.isNotEmpty) facilities.add(s);
+      }
+    }
+    return CitizenShelter(
+      id: (row['id'] ?? '').toString(),
+      name: (row['name'] ?? '').toString(),
+      distanceText: (row['distance_text'] ?? '').toString(),
+      statusText: (row['status_text'] ?? '').toString(),
+      isOpen: row['is_open'] is bool ? row['is_open'] as bool : true,
+      address: (row['address'] ?? '').toString(),
+      capacity: (row['capacity'] is num)
+          ? (row['capacity'] as num).toInt()
+          : int.tryParse('${row['capacity'] ?? 100}') ?? 100,
+      occupied: (row['occupied'] is num)
+          ? (row['occupied'] as num).toInt()
+          : int.tryParse('${row['occupied'] ?? 0}') ?? 0,
+      facilities: facilities,
+      xPercent: (row['x_percent'] is num)
+          ? (row['x_percent'] as num).toDouble()
+          : 0.5,
+      yPercent: (row['y_percent'] is num)
+          ? (row['y_percent'] as num).toDouble()
+          : 0.5,
+    );
+  }
 }
 
 /// 初期避難所リスト（最寄りは `〇〇地区 〇〇小学校` `150m先`）
@@ -392,6 +512,20 @@ class CitizenHazardSpot {
   final String description;
   final double xPercent;
   final double yPercent;
+
+  factory CitizenHazardSpot.fromSupabaseRow(Map<String, dynamic> row) {
+    return CitizenHazardSpot(
+      id: (row['id'] ?? '').toString(),
+      title: (row['title'] ?? '').toString(),
+      description: (row['description'] ?? '').toString(),
+      xPercent: (row['x_percent'] is num)
+          ? (row['x_percent'] as num).toDouble()
+          : 0.5,
+      yPercent: (row['y_percent'] is num)
+          ? (row['y_percent'] as num).toDouble()
+          : 0.5,
+    );
+  }
 }
 
 /// 初期危険箇所リスト
@@ -443,6 +577,40 @@ class CitizenMessage {
   final String time;
   final bool isMine;
   final bool isImportant;
+
+  factory CitizenMessage.fromSupabaseRow(
+    Map<String, dynamic> row, {
+    String? currentUserId,
+  }) {
+    final rawKind = (row['kind'] ?? '').toString();
+    final kind = rawKind == 'family_thread'
+        ? CitizenMessageKind.familyThread
+        : CitizenMessageKind.municipalityNotice;
+    final senderId = row['sender_id']?.toString();
+    final isMine =
+        currentUserId != null && senderId != null && senderId == currentUserId;
+    return CitizenMessage(
+      id: (row['id'] ?? '').toString(),
+      kind: kind,
+      sender: (row['sender_name'] ?? '不明').toString(),
+      avatar: (row['avatar'] ?? (kind == CitizenMessageKind.municipalityNotice ? '🏛️' : '🙂')).toString(),
+      body: (row['body'] ?? '').toString(),
+      time: _formatCitizenTime(row['created_at']),
+      isMine: isMine,
+      isImportant: row['is_important'] is bool ? row['is_important'] as bool : false,
+    );
+  }
+}
+
+String _formatCitizenTime(Object? raw) {
+  if (raw == null) return '';
+  final dt = raw is DateTime
+      ? raw.toLocal()
+      : DateTime.tryParse(raw.toString().trim())?.toLocal();
+  if (dt == null) return '';
+  final h = dt.hour.toString().padLeft(2, '0');
+  final m = dt.minute.toString().padLeft(2, '0');
+  return '$h:$m';
 }
 
 /// 初期メッセージ一覧（自治体お知らせ + 家族連絡）

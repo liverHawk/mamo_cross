@@ -8,7 +8,7 @@ import 'package:mamo_cross/services/rescue_data_source.dart';
 import 'package:mamo_cross/services/supabase_rescue_data_source.dart';
 import 'package:mamo_cross/state/citizen_store.dart';
 import 'package:mamo_cross/state/rescue_store.dart';
-import 'package:supabase/supabase.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 
 class _FakeRescueDataSource implements RescueDataSource {
   Completer<Map<String, dynamic>?>? insertCompleter;

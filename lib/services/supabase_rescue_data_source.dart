@@ -1,7 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/foundation.dart';
-import 'package:supabase/supabase.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../config/supabase_config.dart';
 import '../models/rescue_request.dart';
@@ -10,7 +10,7 @@ import 'rescue_data_source.dart';
 /// Supabase (`public.rescue_requests`) に対する本番データソース実装
 class SupabaseRescueDataSource implements RescueDataSource {
   SupabaseRescueDataSource({
-    this.config = SupabaseConfig.exhibition,
+    this.config = SupabaseConfig.fromEnvironment,
     SupabaseClient? client,
   }) : _injectedClient = client;
 
@@ -21,6 +21,7 @@ class SupabaseRescueDataSource implements RescueDataSource {
   final SupabaseClient? _injectedClient;
 
   SupabaseClient? _ownedClient;
+  SupabaseClient? _activeClient;
   RealtimeChannel? _channel;
   StreamController<RescueRealtimeEvent>? _realtimeController;
   final Completer<void> _disposeCompleter = Completer<void>();
@@ -28,12 +29,24 @@ class SupabaseRescueDataSource implements RescueDataSource {
 
   SupabaseClient? _resolveClient() {
     if (_disposed) return null;
-    if (_injectedClient != null) return _injectedClient;
+    if (_injectedClient != null) {
+      _activeClient = _injectedClient;
+      return _injectedClient;
+    }
     if (!config.isConfigured) {
       debugPrint('Supabase設定がありません');
       return null;
     }
-    return _ownedClient ??= SupabaseClient(
+    try {
+      if (config.url == SupabaseConfig.fromEnvironment.url &&
+          config.publishableKey ==
+              SupabaseConfig.fromEnvironment.publishableKey &&
+          Supabase.instance.isInitialized) {
+        _activeClient = Supabase.instance.client;
+        return _activeClient;
+      }
+    } catch (_) {}
+    _ownedClient ??= SupabaseClient(
       config.url,
       config.publishableKey,
       authOptions: const AuthClientOptions(autoRefreshToken: false),
@@ -42,6 +55,8 @@ class SupabaseRescueDataSource implements RescueDataSource {
         connectionCloseTimeout: Duration.zero,
       ),
     );
+    _activeClient = _ownedClient;
+    return _ownedClient;
   }
 
   @override
@@ -210,7 +225,7 @@ class SupabaseRescueDataSource implements RescueDataSource {
   ) async {
     if (channel != null) {
       try {
-        final client = _injectedClient ?? _ownedClient;
+        final client = _injectedClient ?? _ownedClient ?? _activeClient;
         if (client != null) {
           await client.removeChannel(channel);
         } else {
@@ -244,6 +259,8 @@ class SupabaseRescueDataSource implements RescueDataSource {
 
     final owned = _ownedClient;
     _ownedClient = null;
+    final activeClient = _activeClient;
+    _activeClient = null;
     if (owned != null) {
       final realtime = owned.realtime;
       final conn = realtime.conn;
@@ -259,9 +276,10 @@ class SupabaseRescueDataSource implements RescueDataSource {
 
     if (channel != null) {
       try {
-        final injected = _injectedClient;
-        if (injected != null) {
-          await injected.removeChannel(channel);
+        final clientToRemoveFrom =
+            _injectedClient ?? (owned == null ? activeClient : null);
+        if (clientToRemoveFrom != null) {
+          await clientToRemoveFrom.removeChannel(channel);
         } else {
           final unsubFuture = channel.unsubscribe(Duration.zero);
           if (owned != null) {
