@@ -43,7 +43,7 @@ class SupabaseAuthService implements AuthService {
         final resolved = resolver();
         if (resolved != null) return resolved;
       } catch (e) {
-        debugPrint('MAMO 認証クライアント解決エラー: $e');
+        appLog('MAMO 認証クライアント解決エラー: $e');
         return null;
       }
     }
