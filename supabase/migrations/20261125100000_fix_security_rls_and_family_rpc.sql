@@ -33,6 +33,11 @@ begin
     raise exception 'Authentication required';
   end if;
 
+  -- 同一ユーザーの並列呼び出しによる重複グループ生成を防止
+  perform pg_catalog.pg_advisory_xact_lock(
+    pg_catalog.hashtextextended(v_uid::text, 0)
+  );
+
   select fg.id, fg.name, fg.invite_code, fg.created_by, fg.created_at
   into v_group
   from public.family_members fm
