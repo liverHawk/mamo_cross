@@ -918,8 +918,9 @@ class CitizenStore extends ChangeNotifier {
   }
 
   Future<RescueRequest>? _inflightRescue;
+  String? _inflightRescueKey;
 
-  /// 二重送信防止: 送信処理中の再呼び出しは同一の送信結果を共有する
+  /// 二重送信防止: 同一内容の送信処理中の再呼び出し（連打）は同一の送信結果を共有する
   Future<RescueRequest> submitRescue(
     RescueStore rescueStore, {
     String? name,
@@ -928,8 +929,9 @@ class CitizenStore extends ChangeNotifier {
     String locationText = '〇〇地区付近',
     String distanceText = '約150m先（デモ）',
   }) {
+    final key = [name ?? _rescueNameDraft, detail ?? _rescueDetailDraft, care ?? _rescueCareDraft, locationText].join('\u0000');
     final inflight = _inflightRescue;
-    if (inflight != null) return inflight;
+    if (inflight != null && _inflightRescueKey == key) return inflight;
     final future = _submitRescueImpl(
       rescueStore,
       name: name,
@@ -938,8 +940,15 @@ class CitizenStore extends ChangeNotifier {
       locationText: locationText,
       distanceText: distanceText,
     );
-    final guarded = future.whenComplete(() => _inflightRescue = null);
+    late final Future<RescueRequest> guarded;
+    guarded = future.whenComplete(() {
+      if (identical(_inflightRescue, guarded)) {
+        _inflightRescue = null;
+        _inflightRescueKey = null;
+      }
+    });
     _inflightRescue = guarded;
+    _inflightRescueKey = key;
     return guarded;
   }
 
