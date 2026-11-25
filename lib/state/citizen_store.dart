@@ -59,6 +59,9 @@ class CitizenStore extends ChangeNotifier {
   StreamSubscription<List<FamilyMember>>? _familySub;
   StreamSubscription<CitizenMessage>? _messagesSub;
   StreamSubscription<List<CitizenShelter>>? _sheltersSub;
+  Future<void> _authOpChain = Future<void>.value();
+  int _authRevision = 0;
+  int _safetyRequestSeq = 0;
   bool _disposed = false;
 
   CitizenScreen get currentScreen => _currentScreen;
@@ -110,6 +113,12 @@ class CitizenStore extends ChangeNotifier {
 
   String? get toastMessage => _toastMessage;
 
+  Future<T> _enqueueAuthOp<T>(Future<T> Function() op) {
+    final next = _authOpChain.then((_) => op(), onError: (_) => op());
+    _authOpChain = next.then((_) {}, onError: (_) {});
+    return next;
+  }
+
   void goToScreen(CitizenScreen screen) {
     if (_disposed) return;
     if (_currentScreen == screen) return;
@@ -131,63 +140,124 @@ class CitizenStore extends ChangeNotifier {
   Future<void> initializeRemote() async {
     final ds = dataSource;
     if (_disposed || ds == null) return;
+    final rev = _authRevision;
+
+    await Future.wait(<Future<void>>[
+      () async {
+        try {
+          final remoteShelters = await ds.fetchShelters();
+          if (_disposed || _authRevision != rev) return;
+          if (remoteShelters.isNotEmpty) {
+            _shelters = remoteShelters;
+            notifyListeners();
+          }
+        } catch (e) {
+          debugPrint('MAMO 避難所初期取得エラー: $e');
+        }
+      }(),
+      () async {
+        try {
+          final remoteHazards = await ds.fetchHazardSpots();
+          if (_disposed || _authRevision != rev) return;
+          if (remoteHazards.isNotEmpty) {
+            _hazardSpots = remoteHazards;
+            notifyListeners();
+          }
+        } catch (e) {
+          debugPrint('MAMO 危険箇所初期取得エラー: $e');
+        }
+      }(),
+      () async {
+        try {
+          final remoteMessages =
+              await ds.fetchMessages(currentUserId: authService?.currentUserId);
+          if (_disposed || _authRevision != rev) return;
+          if (remoteMessages.isNotEmpty) {
+            _messages = remoteMessages;
+            notifyListeners();
+          }
+        } catch (e) {
+          debugPrint('MAMO メッセージ初期取得エラー: $e');
+        }
+      }(),
+    ]);
+
+    if (_disposed || _authRevision != rev) return;
 
     try {
-      final results = await Future.wait([
-        ds.fetchShelters(),
-        ds.fetchHazardSpots(),
-        ds.fetchMessages(currentUserId: authService?.currentUserId),
-      ]);
-      if (_disposed) return;
-
-      final remoteShelters = results[0] as List<CitizenShelter>;
-      if (remoteShelters.isNotEmpty) {
-        _shelters = remoteShelters;
-      }
-      final remoteHazards = results[1] as List<CitizenHazardSpot>;
-      if (remoteHazards.isNotEmpty) {
-        _hazardSpots = remoteHazards;
-      }
-      final remoteMessages = results[2] as List<CitizenMessage>;
-      if (remoteMessages.isNotEmpty) {
-        _messages = remoteMessages;
-      }
-      notifyListeners();
-
       await _sheltersSub?.cancel();
-      _sheltersSub = ds.subscribeShelters().listen((shelters) {
-        if (_disposed || shelters.isEmpty) return;
-        _shelters = shelters;
-        notifyListeners();
-      });
-
-      final uid = authService?.currentUserId;
-      if (uid != null) {
-        await _syncAuthenticatedUser(uid);
-      } else {
-        await _subscribeMessagesStream(groupId: null, userId: null);
-      }
+      if (_disposed || _authRevision != rev) return;
+      _sheltersSub = ds.subscribeShelters().listen(
+        (shelters) {
+          if (_disposed || shelters.isEmpty) return;
+          _shelters = shelters;
+          notifyListeners();
+        },
+        onError: (Object e) {
+          debugPrint('MAMO 避難所購読エラー: $e');
+        },
+      );
     } catch (e) {
-      debugPrint('MAMO Citizen 初期化エラー: $e');
+      debugPrint('MAMO 避難所購読開始エラー: $e');
+    }
+
+    final uid = authService?.currentUserId;
+    if (uid != null) {
+      await _enqueueAuthOp(() async {
+        if (_disposed || _authRevision != rev) return;
+        try {
+          await _syncAuthenticatedUser(uid, expectedRevision: rev);
+        } catch (e) {
+          debugPrint('MAMO 認証ユーザー初期同期エラー: $e');
+        }
+      });
+    } else {
+      try {
+        await _subscribeMessagesStream(
+          groupId: null,
+          userId: null,
+          expectedRevision: rev,
+        );
+      } catch (e) {
+        debugPrint('MAMO 公開メッセージ購読エラー: $e');
+      }
     }
   }
 
-  Future<void> _authenticateAndSync({bool forceUpsertProfile = false}) async {
-    final ds = dataSource;
-    final auth = authService;
-    if (_disposed || ds == null || auth == null) return;
+  Future<void> _authenticateAndSync({bool forceUpsertProfile = false}) {
+    final rev = _authRevision;
+    return _enqueueAuthOp(() async {
+      final ds = dataSource;
+      final auth = authService;
+      if (_disposed || _authRevision != rev || ds == null || auth == null) {
+        return;
+      }
 
-    final uid = await auth.ensureAnonymousSession();
-    if (_disposed || uid == null) return;
-    await _syncAuthenticatedUser(uid, forceUpsertProfile: forceUpsertProfile);
+      try {
+        final uid = await auth.ensureAnonymousSession();
+        if (_disposed || _authRevision != rev || uid == null) return;
+        await _syncAuthenticatedUser(
+          uid,
+          forceUpsertProfile: forceUpsertProfile,
+          expectedRevision: rev,
+        );
+      } catch (e) {
+        debugPrint('MAMO 認証同期エラー: $e');
+      }
+    });
   }
 
   Future<void> _syncAuthenticatedUser(
     String userId, {
     bool forceUpsertProfile = false,
+    int? expectedRevision,
   }) async {
     final ds = dataSource;
-    if (_disposed || ds == null) return;
+    if (_disposed ||
+        ds == null ||
+        (expectedRevision != null && _authRevision != expectedRevision)) {
+      return;
+    }
 
     if (forceUpsertProfile) {
       await ds.upsertProfile(
@@ -197,7 +267,10 @@ class CitizenStore extends ChangeNotifier {
       );
     } else {
       final existing = await ds.fetchProfile(userId);
-      if (_disposed) return;
+      if (_disposed ||
+          (expectedRevision != null && _authRevision != expectedRevision)) {
+        return;
+      }
       if (existing != null) {
         _profile = existing.profile;
         _mySafety = existing.safety;
@@ -210,85 +283,140 @@ class CitizenStore extends ChangeNotifier {
       }
     }
 
-    if (_disposed) return;
+    if (_disposed ||
+        (expectedRevision != null && _authRevision != expectedRevision)) {
+      return;
+    }
     final group = await ds.fetchOrCreateDefaultFamilyGroup(
       userId: userId,
       displayName: _profile.effectiveDisplayName,
     );
-    if (_disposed) return;
+    if (_disposed ||
+        (expectedRevision != null && _authRevision != expectedRevision)) {
+      return;
+    }
     _familyGroup = group;
 
     if (group != null) {
-      await _loadAndSubscribeFamily(group.id, userId);
+      await _loadAndSubscribeFamily(
+        group.id,
+        userId,
+        expectedRevision: expectedRevision,
+      );
     }
-    await _subscribeMessagesStream(groupId: group?.id, userId: userId);
+    await _subscribeMessagesStream(
+      groupId: group?.id,
+      userId: userId,
+      expectedRevision: expectedRevision,
+    );
+    if (_disposed ||
+        (expectedRevision != null && _authRevision != expectedRevision)) {
+      return;
+    }
     notifyListeners();
   }
 
-  Future<void> _loadAndSubscribeFamily(String groupId, String userId) async {
+  Future<void> _loadAndSubscribeFamily(
+    String groupId,
+    String userId, {
+    int? expectedRevision,
+  }) async {
     final ds = dataSource;
-    if (_disposed || ds == null) return;
+    if (_disposed ||
+        ds == null ||
+        (expectedRevision != null && _authRevision != expectedRevision)) {
+      return;
+    }
 
     final members = await ds.fetchFamilyMembers(
       groupId,
       currentUserId: userId,
     );
-    if (_disposed) return;
+    if (_disposed ||
+        (expectedRevision != null && _authRevision != expectedRevision)) {
+      return;
+    }
     if (members.isNotEmpty) {
       _familyMembers = members;
     }
 
     await _familySub?.cancel();
+    if (_disposed ||
+        (expectedRevision != null && _authRevision != expectedRevision)) {
+      return;
+    }
     _familySub = ds
         .subscribeFamilyMembers(groupId, currentUserId: userId)
-        .listen((updated) {
-      if (_disposed || updated.isEmpty) return;
-      _familyMembers = updated;
-      notifyListeners();
-    });
+        .listen(
+      (updated) {
+        if (_disposed || updated.isEmpty) return;
+        _familyMembers = updated;
+        notifyListeners();
+      },
+      onError: (Object e) {
+        debugPrint('MAMO 家族メンバー購読エラー: $e');
+      },
+    );
   }
 
   Future<void> _subscribeMessagesStream({
     required String? groupId,
     required String? userId,
+    int? expectedRevision,
   }) async {
     final ds = dataSource;
-    if (_disposed || ds == null) return;
+    if (_disposed ||
+        ds == null ||
+        (expectedRevision != null && _authRevision != expectedRevision)) {
+      return;
+    }
 
     final fetched = await ds.fetchMessages(
       groupId: groupId,
       currentUserId: userId,
     );
-    if (_disposed) return;
+    if (_disposed ||
+        (expectedRevision != null && _authRevision != expectedRevision)) {
+      return;
+    }
     if (fetched.isNotEmpty) {
       _messages = fetched;
     }
 
     await _messagesSub?.cancel();
+    if (_disposed ||
+        (expectedRevision != null && _authRevision != expectedRevision)) {
+      return;
+    }
     _messagesSub = ds
         .subscribeMessages(groupId: groupId, currentUserId: userId)
-        .listen((msg) {
-      if (_disposed) return;
-      final alreadyExists = _messages.any((m) => m.id == msg.id);
-      if (alreadyExists) return;
-      // 直前にローカル楽観追加した同一メッセージとの重複を回避
-      final optimisticIdx = _messages.indexWhere(
-        (m) =>
-            m.id.startsWith('msg-') &&
-            m.isMine &&
-            msg.isMine &&
-            m.kind == msg.kind &&
-            m.body == msg.body,
-      );
-      if (optimisticIdx != -1) {
-        final next = List<CitizenMessage>.of(_messages);
-        next[optimisticIdx] = msg;
-        _messages = next;
-      } else {
-        _messages = <CitizenMessage>[..._messages, msg];
-      }
-      notifyListeners();
-    });
+        .listen(
+      (msg) {
+        if (_disposed) return;
+        final alreadyExists = _messages.any((m) => m.id == msg.id);
+        if (alreadyExists) return;
+        // 直前にローカル楽観追加した同一メッセージとの重複を回避
+        final optimisticIdx = _messages.indexWhere(
+          (m) =>
+              m.id.startsWith('msg-') &&
+              m.isMine &&
+              msg.isMine &&
+              m.kind == msg.kind &&
+              m.body == msg.body,
+        );
+        if (optimisticIdx != -1) {
+          final next = List<CitizenMessage>.of(_messages);
+          next[optimisticIdx] = msg;
+          _messages = next;
+        } else {
+          _messages = <CitizenMessage>[..._messages, msg];
+        }
+        notifyListeners();
+      },
+      onError: (Object e) {
+        debugPrint('MAMO メッセージ購読エラー: $e');
+      },
+    );
   }
 
   Future<bool> joinFamilyGroup(String inviteCode) async {
@@ -299,25 +427,46 @@ class CitizenStore extends ChangeNotifier {
       showToast('オフラインのため家族グループに参加できません');
       return false;
     }
+    final rev = _authRevision;
 
-    final uid = authService?.currentUserId ??
-        await authService?.ensureAnonymousSession();
-    if (_disposed || uid == null) return false;
+    return _enqueueAuthOp(() async {
+      if (_disposed || _authRevision != rev) return false;
+      final uid = authService?.currentUserId ??
+          await authService?.ensureAnonymousSession();
+      if (_disposed || _authRevision != rev) return false;
+      if (uid == null) {
+        showToast('認証に失敗したため家族グループに参加できませんでした');
+        return false;
+      }
 
-    final group = await ds.joinFamilyGroupByCode(
-      inviteCode: trimmed,
-      displayName: _profile.effectiveDisplayName,
-    );
-    if (_disposed) return false;
-    if (group == null) {
-      showToast('招待コードが見つかりませんでした');
-      return false;
-    }
-    _familyGroup = group;
-    await _loadAndSubscribeFamily(group.id, uid);
-    await _subscribeMessagesStream(groupId: group.id, userId: uid);
-    showToast('家族グループに参加しました');
-    return true;
+      try {
+        final group = await ds.joinFamilyGroupByCode(
+          inviteCode: trimmed,
+          displayName: _profile.effectiveDisplayName,
+        );
+        if (_disposed || _authRevision != rev) return false;
+        if (group == null) {
+          showToast('招待コードが見つかりませんでした');
+          return false;
+        }
+        _familyGroup = group;
+        await _loadAndSubscribeFamily(group.id, uid, expectedRevision: rev);
+        await _subscribeMessagesStream(
+          groupId: group.id,
+          userId: uid,
+          expectedRevision: rev,
+        );
+        if (_disposed || _authRevision != rev) return false;
+        showToast('家族グループに参加しました');
+        return true;
+      } catch (e) {
+        debugPrint('MAMO 家族グループ参加エラー: $e');
+        if (!_disposed && _authRevision == rev) {
+          showToast('家族グループへの参加に失敗しました（通信状況をご確認ください）');
+        }
+        return false;
+      }
+    });
   }
 
   void demoLogin({Duration delay = const Duration(milliseconds: 450)}) {
@@ -343,19 +492,7 @@ class CitizenStore extends ChangeNotifier {
   }
 
   void logout() {
-    if (_disposed) return;
-    _demoLoginTimer?.cancel();
-    _demoLoginTimer = null;
-    _isLoggedIn = false;
-    _currentScreen = CitizenScreen.login;
-    _currentTab = CitizenTab.home;
-    _familyGroup = null;
-    unawaited(_familySub?.cancel());
-    _familySub = null;
-    if (authService != null) {
-      unawaited(authService!.signOut());
-    }
-    notifyListeners();
+    _resetLocalSessionState(signOutRemote: true);
   }
 
   void selectPhotoDemo() {
@@ -392,6 +529,58 @@ class CitizenStore extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// 設定タブのプロフィール編集をローカル反映し、接続時は Supabase `profiles` へ保存する
+  Future<bool> saveProfileEdits({
+    String? name,
+    String? addressDetail,
+  }) async {
+    if (_disposed) return false;
+    final previousProfile = _profile;
+    _profile = _profile.copyWith(
+      name: name,
+      addressDetail: addressDetail,
+    );
+
+    final ds = dataSource;
+    if (ds == null) {
+      showToast('登録情報を保存しました');
+      return true;
+    }
+
+    notifyListeners();
+    final rev = _authRevision;
+    return _enqueueAuthOp(() async {
+      if (_disposed || _authRevision != rev) return false;
+      var uid = authService?.currentUserId;
+      if (uid == null && _isLoggedIn && authService != null) {
+        uid = await authService!.ensureAnonymousSession();
+      }
+      if (_disposed || _authRevision != rev) return false;
+      if (uid == null) {
+        _profile = previousProfile;
+        showToast('登録情報の保存に失敗しました');
+        return false;
+      }
+
+      try {
+        await ds.upsertProfile(
+          userId: uid,
+          profile: _profile,
+          safetyStatus: _mySafety,
+        );
+        if (_disposed || _authRevision != rev) return false;
+        showToast('登録情報を保存しました');
+        return true;
+      } catch (e) {
+        debugPrint('MAMO プロフィール保存エラー: $e');
+        if (_disposed || _authRevision != rev) return false;
+        _profile = previousProfile;
+        showToast('登録情報の保存に失敗しました');
+        return false;
+      }
+    });
+  }
+
   void toggleConsideration(String option) {
     if (_disposed) return;
     final next = Set<String>.from(_profile.considerations);
@@ -418,11 +607,7 @@ class CitizenStore extends ChangeNotifier {
     showToast(dataSource != null ? '登録が完了しました' : '登録が完了しました（デモ）');
   }
 
-  void updateMySafety(
-    CitizenSafetyStatus status, {
-    bool showFeedbackToast = true,
-  }) {
-    if (_disposed) return;
+  void _applyLocalSafetyStatus(CitizenSafetyStatus status) {
     _mySafety = status;
     _familyMembers = _familyMembers
         .map(
@@ -431,16 +616,62 @@ class CitizenStore extends ChangeNotifier {
               : m,
         )
         .toList();
-    final ds = dataSource;
-    final uid = authService?.currentUserId;
-    if (ds != null && uid != null) {
-      unawaited(ds.updateSafetyStatus(userId: uid, status: status));
-    }
+  }
+
+  void updateMySafety(
+    CitizenSafetyStatus status, {
+    bool showFeedbackToast = true,
+  }) {
+    if (_disposed) return;
+    final previousStatus = _mySafety;
+    final reqSeq = ++_safetyRequestSeq;
+    final rev = _authRevision;
+
+    _applyLocalSafetyStatus(status);
     if (showFeedbackToast) {
       showToast(status.toastMessage);
     } else {
       notifyListeners();
     }
+
+    final ds = dataSource;
+    if (ds == null) return;
+
+    unawaited(
+      _enqueueAuthOp(() async {
+        if (_disposed ||
+            _authRevision != rev ||
+            _safetyRequestSeq != reqSeq) {
+          return;
+        }
+        var uid = authService?.currentUserId;
+        if (uid == null && authService != null) {
+          uid = await authService!.ensureAnonymousSession();
+        }
+        if (_disposed ||
+            _authRevision != rev ||
+            _safetyRequestSeq != reqSeq) {
+          return;
+        }
+        if (uid == null) {
+          _applyLocalSafetyStatus(previousStatus);
+          showToast('安否ステータスの更新に失敗しました');
+          return;
+        }
+        try {
+          await ds.updateSafetyStatus(userId: uid, status: status);
+        } catch (e) {
+          debugPrint('MAMO 安否更新エラー: $e');
+          if (_disposed ||
+              _authRevision != rev ||
+              _safetyRequestSeq != reqSeq) {
+            return;
+          }
+          _applyLocalSafetyStatus(previousStatus);
+          showToast('安否ステータスの更新に失敗しました');
+        }
+      }),
+    );
   }
 
   void setFamilyStatusFilter(CitizenSafetyStatus? filter) {
@@ -500,10 +731,11 @@ class CitizenStore extends ChangeNotifier {
     if (trimmed.isEmpty) return;
 
     final now = DateTime.now();
+    final tempId = 'msg-${now.microsecondsSinceEpoch}';
     _messages = <CitizenMessage>[
       ..._messages,
       CitizenMessage(
-        id: 'msg-${now.microsecondsSinceEpoch}',
+        id: tempId,
         kind: kind,
         sender: _profile.effectiveDisplayName,
         avatar: '🙂',
@@ -515,53 +747,108 @@ class CitizenStore extends ChangeNotifier {
     _activeMessageKind = kind;
     final ds = dataSource;
     if (ds != null) {
+      notifyListeners();
       unawaited(
         _sendRemoteMessage(
           ds: ds,
+          tempId: tempId,
           kind: kind,
           senderName: _profile.effectiveDisplayName,
           body: trimmed,
+          expectedRevision: _authRevision,
         ),
       );
-      showToast('メッセージを送信しました');
     } else {
       showToast('メッセージを送信しました（デモ）');
     }
   }
 
+  void _removeOptimisticMessage(String tempId) {
+    _messages = _messages.where((m) => m.id != tempId).toList();
+  }
+
   Future<void> _sendRemoteMessage({
     required CitizenDataSource ds,
+    required String tempId,
     required CitizenMessageKind kind,
     required String senderName,
     required String body,
+    required int expectedRevision,
   }) async {
-    var uid = authService?.currentUserId;
-    if (uid == null && kind == CitizenMessageKind.familyThread) {
-      uid = await authService?.ensureAnonymousSession();
-    }
-    var groupId = _familyGroup?.id;
-    if (groupId == null &&
-        kind == CitizenMessageKind.familyThread &&
-        uid != null) {
-      final group = await ds.fetchOrCreateDefaultFamilyGroup(
-        userId: uid,
-        displayName: senderName,
-      );
-      if (!_disposed && group != null) {
-        _familyGroup = group;
-        groupId = group.id;
+    try {
+      final sent = await _enqueueAuthOp(() async {
+        if (_disposed || _authRevision != expectedRevision) return null;
+        var uid = authService?.currentUserId;
+        if (uid == null && kind == CitizenMessageKind.familyThread) {
+          uid = await authService?.ensureAnonymousSession();
+        }
+        if (_disposed || _authRevision != expectedRevision) return null;
+        var groupId = _familyGroup?.id;
+        if (groupId == null &&
+            kind == CitizenMessageKind.familyThread &&
+            uid != null) {
+          final group = await ds.fetchOrCreateDefaultFamilyGroup(
+            userId: uid,
+            displayName: senderName,
+          );
+          if (!_disposed &&
+              _authRevision == expectedRevision &&
+              group != null) {
+            _familyGroup = group;
+            groupId = group.id;
+            await _loadAndSubscribeFamily(
+              group.id,
+              uid,
+              expectedRevision: expectedRevision,
+            );
+            await _subscribeMessagesStream(
+              groupId: group.id,
+              userId: uid,
+              expectedRevision: expectedRevision,
+            );
+          }
+        }
+        if (_disposed || _authRevision != expectedRevision) return null;
+        if (kind == CitizenMessageKind.familyThread &&
+            (uid == null || groupId == null)) {
+          return null;
+        }
+        return ds.sendMessage(
+          kind: kind,
+          senderName: senderName,
+          body: body,
+          groupId: kind == CitizenMessageKind.familyThread ? groupId : null,
+          senderId: uid,
+        );
+      });
+
+      if (_disposed || _authRevision != expectedRevision) return;
+      if (sent == null) {
+        _removeOptimisticMessage(tempId);
+        showToast('メッセージの送信に失敗しました');
+        return;
       }
+
+      final next = List<CitizenMessage>.of(_messages);
+      final tempIdx = next.indexWhere((m) => m.id == tempId);
+      final realIdx = next.indexWhere((m) => m.id == sent.id);
+      if (realIdx != -1) {
+        if (tempIdx != -1 && tempIdx != realIdx) {
+          next.removeAt(tempIdx);
+        }
+      } else if (tempIdx != -1) {
+        next[tempIdx] = sent;
+      } else {
+        next.add(sent);
+      }
+      _messages = next;
+      showToast('メッセージを送信しました');
+    } catch (e) {
+      debugPrint('MAMO メッセージ送信エラー: $e');
+      if (_disposed || _authRevision != expectedRevision) return;
+      _removeOptimisticMessage(tempId);
+      showToast('メッセージの送信に失敗しました');
     }
-    if (kind == CitizenMessageKind.familyThread && groupId == null) {
-      return;
-    }
-    await ds.sendMessage(
-      kind: kind,
-      senderName: senderName,
-      body: body,
-      groupId: kind == CitizenMessageKind.familyThread ? groupId : null,
-      senderId: uid,
-    );
   }
 
   void sendQuickReply(String reply) {
@@ -681,7 +968,14 @@ class CitizenStore extends ChangeNotifier {
   }
 
   void resetDemo() {
+    _resetLocalSessionState(signOutRemote: true);
+  }
+
+  void _resetLocalSessionState({required bool signOutRemote}) {
     if (_disposed) return;
+    final rev = ++_authRevision;
+    _safetyRequestSeq++;
+
     _toastTimer?.cancel();
     _toastTimer = null;
     _demoLoginTimer?.cancel();
@@ -696,6 +990,8 @@ class CitizenStore extends ChangeNotifier {
     _familyGroup = null;
     unawaited(_familySub?.cancel());
     _familySub = null;
+    unawaited(_messagesSub?.cancel());
+    _messagesSub = null;
     _familyStatusFilter = null;
     _familyCheckInSent = false;
     _selectedShelter = null;
@@ -709,6 +1005,31 @@ class CitizenStore extends ChangeNotifier {
     _latestRescueSummary = null;
     _toastMessage = null;
     notifyListeners();
+
+    if (signOutRemote && authService != null) {
+      unawaited(
+        _enqueueAuthOp(() async {
+          if (_disposed || _authRevision != rev) return;
+          try {
+            await authService!.signOut();
+          } catch (e) {
+            debugPrint('MAMO サインアウトエラー: $e');
+          }
+          if (_disposed || _authRevision != rev || _isLoggedIn) return;
+          if (dataSource != null) {
+            try {
+              await _subscribeMessagesStream(
+                groupId: null,
+                userId: null,
+                expectedRevision: rev,
+              );
+            } catch (e) {
+              debugPrint('MAMO ログアウト後メッセージ再購読エラー: $e');
+            }
+          }
+        }),
+      );
+    }
   }
 
   void showToast(
@@ -745,6 +1066,8 @@ class CitizenStore extends ChangeNotifier {
   void dispose() {
     if (_disposed) return;
     _disposed = true;
+    _authRevision++;
+    _safetyRequestSeq++;
     _toastTimer?.cancel();
     _toastTimer = null;
     _demoLoginTimer?.cancel();

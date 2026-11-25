@@ -248,9 +248,12 @@ class RescueStore extends ChangeNotifier {
       [row['requester_name'], row['user_name']],
       existing.name,
     );
-    final rawRequestType = row['request_type']?.toString().trim();
-    final nextAgency = (rawRequestType != null && rawRequestType.isNotEmpty)
-        ? RescueRequest.parseAgency(rawRequestType)
+    final rawAgency = _pickUpdatedText(
+      [row['assigned_agency'], row['request_type']],
+      '',
+    );
+    final nextAgency = rawAgency.isNotEmpty
+        ? RescueRequest.parseAgency(rawAgency)
         : existing.agency;
     final nextLocation = _pickUpdatedText(
       [row['location_text'], row['location']],
@@ -268,6 +271,14 @@ class RescueStore extends ChangeNotifier {
       [row['considerations'], row['health_condition'], row['consideration']],
       existing.consideration,
     );
+    final nextLatPercent = _parseRemotePercent(
+      row['lat_percent'],
+      existing.latPercent,
+    );
+    final nextTopPercent = _parseRemotePercent(
+      row['top_percent'],
+      existing.topPercent,
+    );
 
     _requests[index] = existing.copyWith(
       status: nextStatus,
@@ -277,8 +288,23 @@ class RescueStore extends ChangeNotifier {
       distance: nextDistance,
       content: nextContent,
       consideration: nextConsideration,
+      latPercent: nextLatPercent,
+      topPercent: nextTopPercent,
     );
     notifyListeners();
+  }
+
+  static double _parseRemotePercent(Object? value, double fallback) {
+    if (value is num && value.isFinite) {
+      return value.toDouble();
+    }
+    if (value != null) {
+      final parsed = double.tryParse(value.toString().trim());
+      if (parsed != null && parsed.isFinite) {
+        return parsed;
+      }
+    }
+    return fallback;
   }
 
   static String _pickUpdatedText(List<Object?> candidates, String fallback) {
