@@ -29,9 +29,12 @@ class CitizenStore extends ChangeNotifier {
   CitizenScreen _currentScreen = CitizenScreen.login;
   CitizenTab _currentTab = CitizenTab.home;
   CitizenRegistrationProfile _profile = const CitizenRegistrationProfile();
+  CitizenRegistrationProfile _lastSyncedProfile =
+      const CitizenRegistrationProfile();
   bool _isLoggedIn = false;
 
   CitizenSafetyStatus _mySafety = CitizenSafetyStatus.safe;
+  CitizenSafetyStatus _lastSyncedSafety = CitizenSafetyStatus.safe;
   FamilyGroupInfo? _familyGroup;
   List<FamilyMember> _familyMembers;
   CitizenSafetyStatus? _familyStatusFilter;
@@ -62,6 +65,7 @@ class CitizenStore extends ChangeNotifier {
   Future<void> _authOpChain = Future<void>.value();
   int _authRevision = 0;
   int _safetyRequestSeq = 0;
+  int _profileRequestSeq = 0;
   bool _disposed = false;
 
   CitizenScreen get currentScreen => _currentScreen;
@@ -260,11 +264,19 @@ class CitizenStore extends ChangeNotifier {
     }
 
     if (forceUpsertProfile) {
+      final targetProfile = _profile;
+      final targetSafety = _mySafety;
       await ds.upsertProfile(
         userId: userId,
-        profile: _profile,
-        safetyStatus: _mySafety,
+        profile: targetProfile,
+        safetyStatus: targetSafety,
       );
+      if (_disposed ||
+          (expectedRevision != null && _authRevision != expectedRevision)) {
+        return;
+      }
+      _lastSyncedProfile = targetProfile;
+      _lastSyncedSafety = targetSafety;
     } else {
       final existing = await ds.fetchProfile(userId);
       if (_disposed ||
@@ -273,13 +285,23 @@ class CitizenStore extends ChangeNotifier {
       }
       if (existing != null) {
         _profile = existing.profile;
+        _lastSyncedProfile = existing.profile;
         _mySafety = existing.safety;
+        _lastSyncedSafety = existing.safety;
       } else {
+        final targetProfile = _profile;
+        final targetSafety = _mySafety;
         await ds.upsertProfile(
           userId: userId,
-          profile: _profile,
-          safetyStatus: _mySafety,
+          profile: targetProfile,
+          safetyStatus: targetSafety,
         );
+        if (_disposed ||
+            (expectedRevision != null && _authRevision != expectedRevision)) {
+          return;
+        }
+        _lastSyncedProfile = targetProfile;
+        _lastSyncedSafety = targetSafety;
       }
     }
 
@@ -381,6 +403,7 @@ class CitizenStore extends ChangeNotifier {
     }
     if (fetched.isNotEmpty) {
       _messages = fetched;
+      notifyListeners();
     }
 
     await _messagesSub?.cancel();
@@ -517,6 +540,7 @@ class CitizenStore extends ChangeNotifier {
     String? addressDetail,
   }) {
     if (_disposed) return;
+    _profileRequestSeq++;
     _profile = _profile.copyWith(
       name: name,
       birthDate: birthDate,
@@ -535,14 +559,16 @@ class CitizenStore extends ChangeNotifier {
     String? addressDetail,
   }) async {
     if (_disposed) return false;
-    final previousProfile = _profile;
-    _profile = _profile.copyWith(
+    final targetProfile = _profile.copyWith(
       name: name,
       addressDetail: addressDetail,
     );
+    final reqSeq = ++_profileRequestSeq;
+    _profile = targetProfile;
 
     final ds = dataSource;
     if (ds == null) {
+      _lastSyncedProfile = targetProfile;
       showToast('登録情報を保存しました');
       return true;
     }
@@ -557,25 +583,32 @@ class CitizenStore extends ChangeNotifier {
       }
       if (_disposed || _authRevision != rev) return false;
       if (uid == null) {
-        _profile = previousProfile;
-        showToast('登録情報の保存に失敗しました');
+        if (_profileRequestSeq == reqSeq) {
+          _profile = _lastSyncedProfile;
+          showToast('登録情報の保存に失敗しました');
+        }
         return false;
       }
 
       try {
         await ds.upsertProfile(
           userId: uid,
-          profile: _profile,
-          safetyStatus: _mySafety,
+          profile: targetProfile,
+          safetyStatus: _lastSyncedSafety,
         );
         if (_disposed || _authRevision != rev) return false;
-        showToast('登録情報を保存しました');
+        _lastSyncedProfile = targetProfile;
+        if (_profileRequestSeq == reqSeq) {
+          showToast('登録情報を保存しました');
+        }
         return true;
       } catch (e) {
         debugPrint('MAMO プロフィール保存エラー: $e');
         if (_disposed || _authRevision != rev) return false;
-        _profile = previousProfile;
-        showToast('登録情報の保存に失敗しました');
+        if (_profileRequestSeq == reqSeq) {
+          _profile = _lastSyncedProfile;
+          showToast('登録情報の保存に失敗しました');
+        }
         return false;
       }
     });
@@ -583,6 +616,7 @@ class CitizenStore extends ChangeNotifier {
 
   void toggleConsideration(String option) {
     if (_disposed) return;
+    _profileRequestSeq++;
     final next = Set<String>.from(_profile.considerations);
     if (!next.add(option)) {
       next.remove(option);
@@ -593,12 +627,14 @@ class CitizenStore extends ChangeNotifier {
 
   void updateOtherConsideration(String text) {
     if (_disposed) return;
+    _profileRequestSeq++;
     _profile = _profile.copyWith(otherConsideration: text);
     notifyListeners();
   }
 
   void completeRegistration() {
     if (_disposed) return;
+    _profileRequestSeq++;
     _profile = _profile.copyWith(name: _profile.name.trim());
     _isLoggedIn = true;
     _currentScreen = CitizenScreen.home;
@@ -623,7 +659,6 @@ class CitizenStore extends ChangeNotifier {
     bool showFeedbackToast = true,
   }) {
     if (_disposed) return;
-    final previousStatus = _mySafety;
     final reqSeq = ++_safetyRequestSeq;
     final rev = _authRevision;
 
@@ -635,7 +670,10 @@ class CitizenStore extends ChangeNotifier {
     }
 
     final ds = dataSource;
-    if (ds == null) return;
+    if (ds == null) {
+      _lastSyncedSafety = status;
+      return;
+    }
 
     unawaited(
       _enqueueAuthOp(() async {
@@ -654,12 +692,14 @@ class CitizenStore extends ChangeNotifier {
           return;
         }
         if (uid == null) {
-          _applyLocalSafetyStatus(previousStatus);
+          _applyLocalSafetyStatus(_lastSyncedSafety);
           showToast('安否ステータスの更新に失敗しました');
           return;
         }
         try {
           await ds.updateSafetyStatus(userId: uid, status: status);
+          if (_disposed || _authRevision != rev) return;
+          _lastSyncedSafety = status;
         } catch (e) {
           debugPrint('MAMO 安否更新エラー: $e');
           if (_disposed ||
@@ -667,7 +707,7 @@ class CitizenStore extends ChangeNotifier {
               _safetyRequestSeq != reqSeq) {
             return;
           }
-          _applyLocalSafetyStatus(previousStatus);
+          _applyLocalSafetyStatus(_lastSyncedSafety);
           showToast('安否ステータスの更新に失敗しました');
         }
       }),
@@ -975,6 +1015,7 @@ class CitizenStore extends ChangeNotifier {
     if (_disposed) return;
     final rev = ++_authRevision;
     _safetyRequestSeq++;
+    _profileRequestSeq++;
 
     _toastTimer?.cancel();
     _toastTimer = null;
@@ -984,8 +1025,10 @@ class CitizenStore extends ChangeNotifier {
     _currentScreen = CitizenScreen.login;
     _currentTab = CitizenTab.home;
     _profile = const CitizenRegistrationProfile();
+    _lastSyncedProfile = const CitizenRegistrationProfile();
     _isLoggedIn = false;
     _mySafety = CitizenSafetyStatus.safe;
+    _lastSyncedSafety = CitizenSafetyStatus.safe;
     _familyMembers = createInitialFamilyMembers();
     _familyGroup = null;
     unawaited(_familySub?.cancel());
@@ -1068,6 +1111,7 @@ class CitizenStore extends ChangeNotifier {
     _disposed = true;
     _authRevision++;
     _safetyRequestSeq++;
+    _profileRequestSeq++;
     _toastTimer?.cancel();
     _toastTimer = null;
     _demoLoginTimer?.cancel();
