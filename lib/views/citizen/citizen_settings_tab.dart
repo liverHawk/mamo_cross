@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:material_ui/material_ui.dart';
 
 import '../../models/app_mode.dart';
@@ -47,11 +49,12 @@ class _CitizenSettingsTabState extends State<CitizenSettingsTab> {
   }
 
   void _saveEdit() {
-    widget.store.updateBasicInfo(
-      name: _nameController.text.trim(),
-      addressDetail: _addressController.text.trim(),
+    unawaited(
+      widget.store.saveProfileEdits(
+        name: _nameController.text.trim(),
+        addressDetail: _addressController.text.trim(),
+      ),
     );
-    widget.store.showToast('登録情報を保存しました');
     setState(() => _isEditing = false);
   }
 

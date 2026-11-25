@@ -436,15 +436,31 @@ class _FamilyGroupCardState extends State<_FamilyGroupCard> {
                 ),
             ],
           ),
+          if (inviteCode == null || inviteCode.isEmpty) ...[
+            const SizedBox(height: 6),
+            Text(
+              widget.store.isLoggedIn
+                  ? '招待コードを取得中または未発行です'
+                  : 'ログイン・登録後に招待コードが発行されます',
+              style: const TextStyle(
+                fontSize: 11.5,
+                color: MamoColors.textSecondary,
+              ),
+            ),
+          ],
           const SizedBox(height: 10),
           Row(
             children: [
               Expanded(
                 child: TextField(
                   controller: _codeController,
+                  maxLength: 6,
                   textCapitalization: TextCapitalization.characters,
+                  textInputAction: TextInputAction.done,
+                  onSubmitted: (_) => _join(),
                   decoration: const InputDecoration(
                     hintText: '招待コードを入力（例: ABC123）',
+                    counterText: '',
                     isDense: true,
                     contentPadding: EdgeInsets.symmetric(
                       horizontal: 10,
