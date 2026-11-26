@@ -120,8 +120,11 @@ const List<String> kCitizenQuickReplies = <String>[
   '連絡ありがとう！',
 ];
 
+/// デフォルトのデモ位置情報（山口県山口市）
+const String kDefaultCitizenLocationNote = '山口県山口市亀山町付近';
+
 /// ホーム画面の緊急災害警報バナー文言
-const String kCitizenAlertBannerText = '⚠　〇〇地区　震度5強';
+const String kCitizenAlertBannerText = '⚠　山口市大殿地区　震度5強';
 
 /// 利用者登録プロフィール（#reg1〜#reg3）
 class CitizenRegistrationProfile {
@@ -251,7 +254,7 @@ class CitizenRegistrationProfile {
   Map<String, dynamic> toSupabaseUpsert(
     String userId, {
     required CitizenSafetyStatus safetyStatus,
-    String locationNote = '〇〇地区付近',
+    String locationNote = kDefaultCitizenLocationNote,
   }) {
     return <String, dynamic>{
       'id': userId,
@@ -265,7 +268,9 @@ class CitizenRegistrationProfile {
       'considerations': considerations.toList(),
       'other_consideration': otherConsideration.trim(),
       'safety_status': safetyStatus.name,
-      'location_note': locationNote.trim().isEmpty ? '〇〇地区付近' : locationNote.trim(),
+      'location_note': locationNote.trim().isEmpty
+          ? kDefaultCitizenLocationNote
+          : locationNote.trim(),
       'safety_updated_at': DateTime.now().toUtc().toIso8601String(),
       'updated_at': DateTime.now().toUtc().toIso8601String(),
     };
@@ -364,7 +369,7 @@ List<FamilyMember> createInitialFamilyMembers() => <FamilyMember>[
         avatar: '👩',
         status: CitizenSafetyStatus.safe,
         lastUpdated: '14:15',
-        locationNote: '〇〇小学校 避難所',
+        locationNote: '大殿小学校 避難所',
       ),
       const FamilyMember(
         id: 'dad',
@@ -389,7 +394,7 @@ List<FamilyMember> createInitialFamilyMembers() => <FamilyMember>[
         status: CitizenSafetyStatus.safe,
         isSelf: true,
         lastUpdated: 'たった今',
-        locationNote: '〇〇地区付近',
+        locationNote: kDefaultCitizenLocationNote,
       ),
     ];
 
@@ -454,15 +459,15 @@ class CitizenShelter {
   }
 }
 
-/// 初期避難所リスト（最寄りは `〇〇地区 〇〇小学校` `150m先`）
+/// 初期避難所リスト（最寄りは `大殿地区 大殿小学校` `150m先`）
 const List<CitizenShelter> kInitialCitizenShelters = <CitizenShelter>[
   CitizenShelter(
     id: 'shelter_1',
-    name: '〇〇地区 〇〇小学校',
+    name: '大殿地区 大殿小学校',
     distanceText: '150m先',
     statusText: '避難所開設',
     isOpen: true,
-    address: '〇〇地区1-2-3',
+    address: '山口県山口市大殿大路120',
     capacity: 300,
     occupied: 128,
     facilities: <String>['給水', '非常電源', '医療救護', 'バリアフリー'],
@@ -471,11 +476,11 @@ const List<CitizenShelter> kInitialCitizenShelters = <CitizenShelter>[
   ),
   CitizenShelter(
     id: 'shelter_2',
-    name: '〇〇公民館（福祉避難所）',
+    name: '湯田地域交流センター（福祉避難所）',
     distanceText: '420m先',
     statusText: '避難所開設（要配慮者優先）',
     isOpen: true,
-    address: '〇〇地区2-8-10',
+    address: '山口県山口市湯田温泉5-5-15',
     capacity: 120,
     occupied: 54,
     facilities: <String>['福祉対応', '授乳室', '車椅子対応', '非常電源'],
@@ -484,11 +489,11 @@ const List<CitizenShelter> kInitialCitizenShelters = <CitizenShelter>[
   ),
   CitizenShelter(
     id: 'shelter_3',
-    name: '中央防災公園（一時避難場所）',
+    name: '亀山公園（一時避難場所）',
     distanceText: '650m先',
     statusText: '広域避難場所・給水車待機',
     isOpen: true,
-    address: '〇〇地区中央4-1',
+    address: '山口県山口市亀山町2-1',
     capacity: 800,
     occupied: 210,
     facilities: <String>['給水車', '仮設トイレ', 'ヘリポート'],
@@ -533,14 +538,14 @@ const List<CitizenHazardSpot> kInitialCitizenHazards = <CitizenHazardSpot>[
   CitizenHazardSpot(
     id: 'hazard_1',
     title: 'ブロック塀倒壊のおそれ',
-    description: '〇〇小学校西側の通学路沿い・迂回推奨',
+    description: '大殿小学校西側の通学路沿い・迂回推奨',
     xPercent: 0.44,
     yPercent: 0.28,
   ),
   CitizenHazardSpot(
     id: 'hazard_2',
     title: '一部道路冠水・通行止め',
-    description: '〇〇川沿いアンダーパス通行不可',
+    description: '一の坂川沿いアンダーパス通行不可',
     xPercent: 0.72,
     yPercent: 0.55,
   ),
@@ -618,18 +623,18 @@ List<CitizenMessage> createInitialCitizenMessages() => <CitizenMessage>[
       const CitizenMessage(
         id: 'notice_1',
         kind: CitizenMessageKind.municipalityNotice,
-        sender: '〇〇市 災害対策本部',
+        sender: '山口市 災害対策本部',
         avatar: '🏛️',
-        body: '【緊急】〇〇地区で震度5強を観測しました。〇〇地区 〇〇小学校ほか2箇所の避難所を開設しています。',
+        body: '【緊急】山口市大殿地区で震度5強を観測しました。大殿地区 大殿小学校ほか2箇所の避難所を開設しています。',
         time: '14:05',
         isImportant: true,
       ),
       const CitizenMessage(
         id: 'notice_2',
         kind: CitizenMessageKind.municipalityNotice,
-        sender: '〇〇市 防災無線',
+        sender: '山口市 防災無線',
         avatar: '📢',
-        body: '〇〇小学校にて給水および非常電源の提供を開始しました。余震にご注意ください。',
+        body: '大殿小学校にて給水および非常電源の提供を開始しました。余震にご注意ください。',
         time: '14:16',
       ),
       const CitizenMessage(
@@ -637,7 +642,7 @@ List<CitizenMessage> createInitialCitizenMessages() => <CitizenMessage>[
         kind: CitizenMessageKind.familyThread,
         sender: 'お母さん',
         avatar: '👩',
-        body: '地震大きかったね。お母さんは〇〇小学校に着きました。みんなは無事？',
+        body: '地震大きかったね。お母さんは大殿小学校に着きました。みんなは無事？',
         time: '14:15',
       ),
       const CitizenMessage(
@@ -708,7 +713,7 @@ Map<String, dynamic> buildCitizenRescuePayload({
   required String requesterName,
   required String rescueDetails,
   required String considerations,
-  String locationText = '〇〇地区付近',
+  String locationText = kDefaultCitizenLocationNote,
   String distanceText = '約150m先（デモ）',
   String requestType = '救助要請',
   String status = '未対応',
@@ -719,8 +724,9 @@ Map<String, dynamic> buildCitizenRescuePayload({
       rescueDetails.trim().isEmpty ? '救助が必要です' : rescueDetails.trim();
   final safeCare =
       considerations.trim().isEmpty ? 'なし' : considerations.trim();
-  final safeLocation =
-      locationText.trim().isEmpty ? '〇〇地区付近' : locationText.trim();
+  final safeLocation = locationText.trim().isEmpty
+      ? kDefaultCitizenLocationNote
+      : locationText.trim();
   final safeDistance =
       distanceText.trim().isEmpty ? '約150m先（デモ）' : distanceText.trim();
 
