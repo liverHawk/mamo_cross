@@ -100,7 +100,7 @@ class SupabaseCitizenDataSource implements CitizenDataSource {
     required String userId,
     required CitizenRegistrationProfile profile,
     required CitizenSafetyStatus safetyStatus,
-    String locationNote = '〇〇地区付近',
+    String locationNote = kDefaultCitizenLocationNote,
   }) async {
     final client = _resolveClient();
     if (client == null) return;

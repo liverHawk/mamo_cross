@@ -402,7 +402,7 @@ class RescueStore extends ChangeNotifier {
     required String requesterName,
     required String rescueDetails,
     required String considerations,
-    String locationText = '〇〇地区付近',
+    String locationText = kDefaultCitizenLocationNote,
     String distanceText = '約150m先（デモ）',
   }) async {
     final now = DateTime.now();
@@ -412,8 +412,9 @@ class RescueStore extends ChangeNotifier {
         rescueDetails.trim().isEmpty ? '救助が必要です' : rescueDetails.trim();
     final normalizedConsiderations =
         considerations.trim().isEmpty ? 'なし' : considerations.trim();
-    final normalizedLocation =
-        locationText.trim().isEmpty ? '〇〇地区付近' : locationText.trim();
+    final normalizedLocation = locationText.trim().isEmpty
+        ? kDefaultCitizenLocationNote
+        : locationText.trim();
     final normalizedDistance =
         distanceText.trim().isEmpty ? '約150m先（デモ）' : distanceText.trim();
 

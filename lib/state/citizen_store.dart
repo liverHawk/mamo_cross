@@ -1116,7 +1116,7 @@ class CitizenStore extends ChangeNotifier {
     String? name,
     String? detail,
     String? care,
-    String locationText = '〇〇地区付近',
+    String locationText = kDefaultCitizenLocationNote,
     String distanceText = '約150m先（デモ）',
   }) {
     final key = [name ?? _rescueNameDraft, detail ?? _rescueDetailDraft, care ?? _rescueCareDraft, locationText].join('\u0000');
@@ -1147,7 +1147,7 @@ class CitizenStore extends ChangeNotifier {
     String? name,
     String? detail,
     String? care,
-    String locationText = '〇〇地区付近',
+    String locationText = kDefaultCitizenLocationNote,
     String distanceText = '約150m先（デモ）',
   }) async {
     final rawName = name ?? _rescueNameDraft;
@@ -1161,8 +1161,9 @@ class CitizenStore extends ChangeNotifier {
         rawDetail.trim().isEmpty ? '救助が必要です' : rawDetail.trim();
     final resolvedCare =
         rawCare.trim().isEmpty ? 'なし' : rawCare.trim();
-    final resolvedLocation =
-        locationText.trim().isEmpty ? '〇〇地区付近' : locationText.trim();
+    final resolvedLocation = locationText.trim().isEmpty
+        ? kDefaultCitizenLocationNote
+        : locationText.trim();
 
     if (!_disposed) {
       updateMySafety(CitizenSafetyStatus.rescueNeeded, showFeedbackToast: false);

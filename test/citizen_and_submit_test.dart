@@ -127,8 +127,8 @@ void main() {
       expect(payload['health_condition'], '🤰 妊娠中');
       expect(payload['consideration'], '🤰 妊娠中');
       expect(payload['considerations'], '🤰 妊娠中');
-      expect(payload['location'], '〇〇地区付近');
-      expect(payload['location_text'], '〇〇地区付近');
+      expect(payload['location'], '山口県山口市亀山町付近');
+      expect(payload['location_text'], '山口県山口市亀山町付近');
       expect(payload['distance'], '約150m先（デモ）');
       expect(payload['distance_text'], '約150m先（デモ）');
       expect(payload['status'], '未対応');
@@ -152,8 +152,8 @@ void main() {
       expect(payload['health_condition'], 'なし');
       expect(payload['consideration'], 'なし');
       expect(payload['considerations'], 'なし');
-      expect(payload['location'], '〇〇地区付近');
-      expect(payload['location_text'], '〇〇地区付近');
+      expect(payload['location'], '山口県山口市亀山町付近');
+      expect(payload['location_text'], '山口県山口市亀山町付近');
       expect(payload['distance'], '約150m先（デモ）');
       expect(payload['distance_text'], '約150m先（デモ）');
     });
@@ -184,9 +184,23 @@ void main() {
       expect(store.familyMembers[3].status, CitizenSafetyStatus.safe);
 
       expect(store.shelters, isNotEmpty);
-      expect(store.nearestShelter.name, '〇〇地区 〇〇小学校');
+      expect(store.nearestShelter.name, '大殿地区 大殿小学校');
+      expect(store.nearestShelter.address, contains('山口県'));
       expect(store.nearestShelter.distanceText, '150m先');
       expect(store.nearestShelter.isOpen, isTrue);
+
+      for (final shelter in store.shelters) {
+        expect(shelter.address, startsWith('山口県'));
+        expect(shelter.address, isNot(contains('〇〇')));
+        expect(shelter.name, isNot(contains('〇〇')));
+      }
+      for (final hazard in store.hazardSpots) {
+        expect(hazard.description, isNot(contains('〇〇')));
+      }
+      for (final msg in store.messages) {
+        expect(msg.sender, isNot(contains('〇〇')));
+        expect(msg.body, isNot(contains('〇〇')));
+      }
 
       expect(store.municipalityNotices, isNotEmpty);
       expect(store.familyMessages, isNotEmpty);
@@ -305,7 +319,7 @@ void main() {
       addTearDown(store.dispose);
 
       store.selectShelterById('shelter_2');
-      expect(store.selectedShelter?.name, '〇〇公民館（福祉避難所）');
+      expect(store.selectedShelter?.name, '湯田地域交流センター（福祉避難所）');
       store.toggleHazardsOnMap();
       expect(store.showHazardsOnMap, isFalse);
 
@@ -416,7 +430,7 @@ void main() {
       expect(created.name, 'あなた');
       expect(created.content, '救助が必要です');
       expect(created.consideration, 'なし');
-      expect(created.location, '〇〇地区付近');
+      expect(created.location, '山口県山口市亀山町付近');
       expect(created.distance, '約150m先（デモ）');
       expect(created.status, RequestStatus.pending);
       expect(created.agency, AgencyType.emergency);
@@ -478,7 +492,7 @@ void main() {
         'requester_name': '田中 美咲',
         'rescue_details': '足首を負傷して動けません',
         'considerations': '🤰 妊娠中',
-        'location_text': '〇〇地区付近',
+        'location_text': '山口県山口市亀山町付近',
         'distance_text': '約150m先（デモ）',
         'status': '未対応',
       };
