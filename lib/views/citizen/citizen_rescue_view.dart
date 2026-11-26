@@ -25,6 +25,7 @@ class _CitizenRescueViewState extends State<CitizenRescueView> {
   late final TextEditingController _nameController;
   late final TextEditingController _detailController;
   late final TextEditingController _careController;
+  late final TextEditingController _locationController;
 
   @override
   void initState() {
@@ -35,6 +36,8 @@ class _CitizenRescueViewState extends State<CitizenRescueView> {
         TextEditingController(text: widget.citizenStore.rescueDetailDraft);
     _careController =
         TextEditingController(text: widget.citizenStore.rescueCareDraft);
+    _locationController =
+        TextEditingController(text: widget.citizenStore.rescueLocationDraft);
     widget.citizenStore.addListener(_syncFromStore);
   }
 
@@ -54,6 +57,7 @@ class _CitizenRescueViewState extends State<CitizenRescueView> {
     _nameController.dispose();
     _detailController.dispose();
     _careController.dispose();
+    _locationController.dispose();
     super.dispose();
   }
 
@@ -66,6 +70,9 @@ class _CitizenRescueViewState extends State<CitizenRescueView> {
     }
     if (_careController.text != widget.citizenStore.rescueCareDraft) {
       _careController.text = widget.citizenStore.rescueCareDraft;
+    }
+    if (_locationController.text != widget.citizenStore.rescueLocationDraft) {
+      _locationController.text = widget.citizenStore.rescueLocationDraft;
     }
   }
 
@@ -199,6 +206,17 @@ class _CitizenRescueViewState extends State<CitizenRescueView> {
                           decoration: _inputDecoration('登録済みの配慮事項など'),
                         ),
                         const SizedBox(height: 14),
+                        const _FieldLabel('現在地・住所'),
+                        TextField(
+                          inputFormatters: [LengthLimitingTextInputFormatter(200)],
+                          controller: _locationController,
+                          onChanged: (v) =>
+                              widget.citizenStore.updateRescueDraft(location: v),
+                          decoration: _inputDecoration(
+                            '例）山口県山口市亀山町2-1（未入力時は〇〇地区付近）',
+                          ),
+                        ),
+                        const SizedBox(height: 14),
                         Container(
                           padding: const EdgeInsets.all(14),
                           decoration: BoxDecoration(
@@ -206,7 +224,7 @@ class _CitizenRescueViewState extends State<CitizenRescueView> {
                             borderRadius: BorderRadius.circular(12),
                           ),
                           child: const Text(
-                            '📍 現在地：デモ位置情報（〇〇地区付近）\n距離：自治体側で受信時に表示',
+                            '📍 位置情報：登録済み住所が自動入力されます（必要に応じて変更可）\n距離：自治体側で受信時に表示',
                             style: TextStyle(
                               fontSize: 12,
                               color: Color(0xFF475569),

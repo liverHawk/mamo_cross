@@ -69,6 +69,7 @@ class CitizenStore extends ChangeNotifier {
   String _rescueNameDraft = 'あなた';
   String _rescueDetailDraft = '';
   String _rescueCareDraft = '';
+  String _rescueLocationDraft = '';
   RescueSummary? _latestRescueSummary;
 
   String? _toastMessage;
@@ -131,6 +132,7 @@ class CitizenStore extends ChangeNotifier {
   String get rescueNameDraft => _rescueNameDraft;
   String get rescueDetailDraft => _rescueDetailDraft;
   String get rescueCareDraft => _rescueCareDraft;
+  String get rescueLocationDraft => _rescueLocationDraft;
   RescueSummary? get latestRescueSummary => _latestRescueSummary;
 
   String? get toastMessage => _toastMessage;
@@ -1091,6 +1093,7 @@ class CitizenStore extends ChangeNotifier {
     _rescueNameDraft = _profile.effectiveDisplayName;
     _rescueDetailDraft = '';
     _rescueCareDraft = _profile.formattedConsiderations;
+    _rescueLocationDraft = _profile.addressLine;
     _currentScreen = CitizenScreen.rescue;
     notifyListeners();
   }
@@ -1099,16 +1102,30 @@ class CitizenStore extends ChangeNotifier {
     String? name,
     String? detail,
     String? care,
+    String? location,
   }) {
     if (_disposed) return;
     if (name != null) _rescueNameDraft = name;
     if (detail != null) _rescueDetailDraft = detail;
     if (care != null) _rescueCareDraft = care;
+    if (location != null) _rescueLocationDraft = location;
     notifyListeners();
   }
 
   Future<RescueRequest>? _inflightRescue;
   String? _inflightRescueKey;
+
+  String _resolveRescueLocation(String? explicitLocation) {
+    if (explicitLocation != null) {
+      final trimmed = explicitLocation.trim();
+      if (trimmed.isNotEmpty) return trimmed;
+    }
+    final draft = _rescueLocationDraft.trim();
+    if (draft.isNotEmpty) return draft;
+    final profileAddr = _profile.addressLine.trim();
+    if (profileAddr.isNotEmpty) return profileAddr;
+    return '〇〇地区付近';
+  }
 
   /// 二重送信防止: 同一内容の送信処理中の再呼び出し（連打）は同一の送信結果を共有する
   Future<RescueRequest> submitRescue(
@@ -1116,10 +1133,16 @@ class CitizenStore extends ChangeNotifier {
     String? name,
     String? detail,
     String? care,
-    String locationText = '〇〇地区付近',
+    String? locationText,
     String distanceText = '約150m先（デモ）',
   }) {
-    final key = [name ?? _rescueNameDraft, detail ?? _rescueDetailDraft, care ?? _rescueCareDraft, locationText].join('\u0000');
+    final resolvedLocation = _resolveRescueLocation(locationText);
+    final key = [
+      name ?? _rescueNameDraft,
+      detail ?? _rescueDetailDraft,
+      care ?? _rescueCareDraft,
+      resolvedLocation,
+    ].join('\u0000');
     final inflight = _inflightRescue;
     if (inflight != null && _inflightRescueKey == key) return inflight;
     final future = _submitRescueImpl(
@@ -1127,7 +1150,7 @@ class CitizenStore extends ChangeNotifier {
       name: name,
       detail: detail,
       care: care,
-      locationText: locationText,
+      locationText: resolvedLocation,
       distanceText: distanceText,
     );
     late final Future<RescueRequest> guarded;
@@ -1147,7 +1170,7 @@ class CitizenStore extends ChangeNotifier {
     String? name,
     String? detail,
     String? care,
-    String locationText = '〇〇地区付近',
+    String? locationText,
     String distanceText = '約150m先（デモ）',
   }) async {
     final rawName = name ?? _rescueNameDraft;
@@ -1161,8 +1184,7 @@ class CitizenStore extends ChangeNotifier {
         rawDetail.trim().isEmpty ? '救助が必要です' : rawDetail.trim();
     final resolvedCare =
         rawCare.trim().isEmpty ? 'なし' : rawCare.trim();
-    final resolvedLocation =
-        locationText.trim().isEmpty ? '〇〇地区付近' : locationText.trim();
+    final resolvedLocation = _resolveRescueLocation(locationText);
 
     if (!_disposed) {
       updateMySafety(CitizenSafetyStatus.rescueNeeded, showFeedbackToast: false);
@@ -1273,6 +1295,7 @@ class CitizenStore extends ChangeNotifier {
     _rescueNameDraft = 'あなた';
     _rescueDetailDraft = '';
     _rescueCareDraft = '';
+    _rescueLocationDraft = '';
     _latestRescueSummary = null;
     _toastMessage = null;
     notifyListeners();
