@@ -1615,6 +1615,147 @@ void main() {
       expect(synced2.latitude, closeTo(34.5100, 0.0001));
       expect(synced2.longitude, closeTo(131.4800, 0.0001));
     });
+
+    test('parseCoordinates falls back on empty/blank primary keys while keeping 0 and rejecting invalid non-empty values', () {
+      final emptyPrimary = RescueRequest.parseCoordinates({
+        'latitude': '',
+        'lat': 33.9578,
+        'longitude': '',
+        'lng': 130.9415,
+      });
+      expect(emptyPrimary, isNotNull);
+      expect(emptyPrimary!.latitude, closeTo(33.9578, 0.0001));
+      expect(emptyPrimary.longitude, closeTo(130.9415, 0.0001));
+
+      final rowModel = RescueRequest.fromSupabaseRow({
+        'id': 31,
+        'request_id': 'MAMO-EMPTY-PRIMARY',
+        'latitude': '',
+        'lat': 33.9578,
+        'longitude': '',
+        'lng': 130.9415,
+      });
+      expect(rowModel.latitude, closeTo(33.9578, 0.0001));
+      expect(rowModel.longitude, closeTo(130.9415, 0.0001));
+
+      final whitespacePrimary = RescueRequest.parseCoordinates({
+        'latitude': '   ',
+        'lat': '34.4081',
+        'longitude': '\t',
+        'lon': '131.3991',
+      });
+      expect(whitespacePrimary, isNotNull);
+      expect(whitespacePrimary!.latitude, closeTo(34.4081, 0.0001));
+      expect(whitespacePrimary.longitude, closeTo(131.3991, 0.0001));
+
+      final zeroCoords = RescueRequest.parseCoordinates({
+        'latitude': 0,
+        'longitude': 0.0,
+      });
+      expect(zeroCoords, isNotNull);
+      expect(zeroCoords!.latitude, 0.0);
+      expect(zeroCoords.longitude, 0.0);
+
+      expect(
+        RescueRequest.parseCoordinates({
+          'latitude': 'abc',
+          'lat': 33.9578,
+          'longitude': 130.9415,
+        }),
+        isNull,
+      );
+      expect(
+        RescueRequest.parseCoordinates({
+          'latitude': 'NaN',
+          'lat': 33.9578,
+          'longitude': 130.9415,
+        }),
+        isNull,
+      );
+      expect(
+        RescueRequest.parseCoordinates({
+          'latitude': '',
+          'lat': '   ',
+          'longitude': '',
+          'lng': '',
+        }),
+        isNull,
+      );
+    });
+
+    test('submitCitizenRequest does not overwrite Realtime UPDATE coordinates when insertRequest completes late', () async {
+      final completer = Completer<Map<String, dynamic>?>();
+      final ds = _CoordinateFakeRescueDataSource(
+        onInsert: (_) => completer.future,
+      );
+      final store = RescueStore(
+        startClock: false,
+        dataSource: ds,
+        autoInitialize: false,
+      );
+      addTearDown(store.dispose);
+      await store.initializeRealtime();
+
+      final submitFuture = store.submitCitizenRequest(
+        requesterName: '競合 太郎',
+        rescueDetails: '救助要請',
+        considerations: 'なし',
+        locationText: '山口県山口市中央1-1',
+      );
+      final reqId = store.requests.single.id;
+      expect(store.requests.single.latitude, closeTo(34.1785, 0.0001));
+      expect(store.requests.single.longitude, closeTo(131.4737, 0.0001));
+
+      // 1) Realtime INSERT 先着（dbId: 777 へ昇格）
+      ds.emitInsert({
+        'id': 777,
+        'request_id': reqId,
+        'latitude': 34.1785,
+        'longitude': 131.4737,
+        'status': '未対応',
+      });
+      await pumpEventQueue();
+      expect(store.requests.single.dbId, '777');
+
+      // 2) Realtime UPDATE 到着（精密座標と担当機関・ステータス更新）
+      ds.emitUpdate({
+        'id': 777,
+        'status': '対応中',
+        'assigned_agency': '消防',
+        'latitude': 34.1950,
+        'longitude': 131.4950,
+      });
+      await pumpEventQueue();
+      expect(store.requests.single.status, RequestStatus.working);
+      expect(store.requests.single.agency, AgencyType.fire);
+      expect(store.requests.single.latitude, closeTo(34.1950, 0.0001));
+      expect(store.requests.single.longitude, closeTo(131.4950, 0.0001));
+
+      // 3) 座標なしの追加 Realtime UPDATE 到着後も最新座標を保持
+      ds.emitUpdate({
+        'id': 777,
+        'status': '対応済み',
+      });
+      await pumpEventQueue();
+
+      // 4) 遅延していた insertRequest が旧座標で完了しても巻き戻らない
+      completer.complete({
+        'id': 777,
+        'request_id': reqId,
+        'latitude': 34.1785,
+        'longitude': 131.4737,
+        'status': '未対応',
+      });
+      final synced = await submitFuture;
+      expect(synced.status, RequestStatus.done);
+      expect(synced.agency, AgencyType.fire);
+      expect(synced.latitude, closeTo(34.1950, 0.0001));
+      expect(synced.longitude, closeTo(131.4950, 0.0001));
+      expect(store.requests.single.status, RequestStatus.done);
+      expect(store.requests.single.agency, AgencyType.fire);
+      expect(store.requests.single.latitude, closeTo(34.1950, 0.0001));
+      expect(store.requests.single.longitude, closeTo(131.4950, 0.0001));
+    });
   });
 
   group('GsiMapView Widget tests', () {
