@@ -206,7 +206,7 @@ class _CitizenRescueViewState extends State<CitizenRescueView> {
                             borderRadius: BorderRadius.circular(12),
                           ),
                           child: const Text(
-                            '📍 現在地：デモ位置情報（〇〇地区付近）\n距離：自治体側で受信時に表示',
+                            '📍 現在地：デモ位置情報（$kDefaultCitizenLocationNote）\n距離：自治体側で受信時に表示',
                             style: TextStyle(
                               fontSize: 12,
                               color: Color(0xFF475569),
