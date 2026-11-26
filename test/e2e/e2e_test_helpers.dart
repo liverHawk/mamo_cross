@@ -731,7 +731,7 @@ void expectValid15ColPayload(
   required String expectedDetail,
   String? expectedConsiderations,
   List<String>? expectedConsiderationSubstrings,
-  String expectedLocation = '〇〇地区付近',
+  String expectedLocation = '山口県山口市亀山町付近',
   String expectedDistance = '約150m先（デモ）',
 }) {
   assert(

@@ -124,7 +124,7 @@ void main() {
           expectedConsiderations: 'なし',
         );
         expect(find.textContaining('あなた'), findsAtLeastNWidgets(1));
-        expect(find.textContaining('〇〇地区付近'), findsOneWidget);
+        expect(find.textContaining('山口県山口市亀山町付近'), findsOneWidget);
 
         await switchCitizenToMunicipality(tester);
         await navigateMunicipalityView(tester, '救助要請一覧');
@@ -321,7 +321,7 @@ void main() {
 
       await tapCitizenBottomTab(tester, 'マップ');
       expect(find.text('家族グループ'), findsNothing);
-      expect(find.textContaining('〇〇小学校'), findsAtLeastNWidgets(1));
+      expect(find.textContaining('大殿小学校'), findsAtLeastNWidgets(1));
       expect(find.textContaining('現在地'), findsAtLeastNWidgets(1));
 
       await tapCitizenBottomTab(tester, 'メッセージ');
@@ -342,7 +342,7 @@ void main() {
       expect(find.text('家族グループ'), findsOneWidget);
       await tapCitizenBottomTab(tester, 'マップ');
       expect(find.text('家族グループ'), findsNothing);
-      expect(find.textContaining('〇〇小学校'), findsAtLeastNWidgets(1));
+      expect(find.textContaining('大殿小学校'), findsAtLeastNWidgets(1));
     });
 
     testWidgets(

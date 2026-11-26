@@ -9,7 +9,7 @@ abstract interface class CitizenDataSource {
     required String userId,
     required CitizenRegistrationProfile profile,
     required CitizenSafetyStatus safetyStatus,
-    String locationNote = '〇〇地区付近',
+    String locationNote = kDefaultCitizenLocationNote,
   });
 
   Future<void> updateSafetyStatus({
