@@ -79,6 +79,7 @@ class CitizenStore extends ChangeNotifier {
   StreamSubscription<List<CitizenShelter>>? _sheltersSub;
   Future<void> _authOpChain = Future<void>.value();
   int _authRevision = 0;
+  int _messageSubEpoch = 0;
   int _safetyRequestSeq = 0;
   int _profileRequestSeq = 0;
   final Map<_CitizenProfileField, int> _fieldDirtySeq =
@@ -139,6 +140,11 @@ class CitizenStore extends ChangeNotifier {
     _authOpChain = next.then((_) {}, onError: (_) {});
     return next;
   }
+
+  bool get _isPublicMessagesSuperseded =>
+      (authService != null && _isLoggedIn) ||
+      authService?.currentUserId != null ||
+      _familyGroup != null;
 
   CitizenRegistrationProfile _mergeProfile({
     required CitizenRegistrationProfile base,
@@ -226,6 +232,7 @@ class CitizenStore extends ChangeNotifier {
     final ds = dataSource;
     if (_disposed || ds == null) return;
     final rev = _authRevision;
+    final initMsgEpoch = _messageSubEpoch;
 
     await Future.wait(<Future<void>>[
       () async {
@@ -256,7 +263,12 @@ class CitizenStore extends ChangeNotifier {
         try {
           final remoteMessages =
               await ds.fetchMessages(currentUserId: authService?.currentUserId);
-          if (_disposed || _authRevision != rev) return;
+          if (_disposed ||
+              _authRevision != rev ||
+              _messageSubEpoch != initMsgEpoch ||
+              _familyGroup != null) {
+            return;
+          }
           if (remoteMessages.isNotEmpty) {
             _messages = remoteMessages;
             notifyListeners();
@@ -286,10 +298,24 @@ class CitizenStore extends ChangeNotifier {
       appLog('MAMO 避難所購読開始エラー: $e');
     }
 
+    if (_disposed ||
+        _authRevision != rev ||
+        _messageSubEpoch != initMsgEpoch ||
+        _familyGroup != null ||
+        (authService != null && _isLoggedIn)) {
+      return;
+    }
+
     final uid = authService?.currentUserId;
     if (uid != null) {
       await _enqueueAuthOp(() async {
-        if (_disposed || _authRevision != rev) return;
+        if (_disposed ||
+            _authRevision != rev ||
+            _messageSubEpoch != initMsgEpoch ||
+            _familyGroup != null ||
+            (authService != null && _isLoggedIn)) {
+          return;
+        }
         try {
           await _syncAuthenticatedUser(uid, expectedRevision: rev);
         } catch (e) {
@@ -458,7 +484,9 @@ class CitizenStore extends ChangeNotifier {
       _familyMembers = members;
     }
 
-    await _familySub?.cancel();
+    final prevFamilySub = _familySub;
+    _familySub = null;
+    await prevFamilySub?.cancel();
     if (_disposed ||
         (expectedRevision != null && _authRevision != expectedRevision)) {
       return;
@@ -467,7 +495,11 @@ class CitizenStore extends ChangeNotifier {
         .subscribeFamilyMembers(groupId, currentUserId: userId)
         .listen(
       (updated) {
-        if (_disposed || updated.isEmpty) return;
+        if (_disposed ||
+            updated.isEmpty ||
+            (expectedRevision != null && _authRevision != expectedRevision)) {
+          return;
+        }
         _familyMembers = updated;
         notifyListeners();
       },
@@ -483,18 +515,23 @@ class CitizenStore extends ChangeNotifier {
     int? expectedRevision,
   }) async {
     final ds = dataSource;
+    final isUnauthenticatedPublic = groupId == null && userId == null;
     if (_disposed ||
         ds == null ||
-        (expectedRevision != null && _authRevision != expectedRevision)) {
+        (expectedRevision != null && _authRevision != expectedRevision) ||
+        (isUnauthenticatedPublic && _isPublicMessagesSuperseded)) {
       return;
     }
+    final msgEpoch = ++_messageSubEpoch;
 
     final fetched = await ds.fetchMessages(
       groupId: groupId,
       currentUserId: userId,
     );
     if (_disposed ||
-        (expectedRevision != null && _authRevision != expectedRevision)) {
+        (expectedRevision != null && _authRevision != expectedRevision) ||
+        _messageSubEpoch != msgEpoch ||
+        (isUnauthenticatedPublic && _isPublicMessagesSuperseded)) {
       return;
     }
     if (fetched.isNotEmpty) {
@@ -502,16 +539,24 @@ class CitizenStore extends ChangeNotifier {
       notifyListeners();
     }
 
-    await _messagesSub?.cancel();
+    final prevSub = _messagesSub;
+    _messagesSub = null;
+    await prevSub?.cancel();
     if (_disposed ||
-        (expectedRevision != null && _authRevision != expectedRevision)) {
+        (expectedRevision != null && _authRevision != expectedRevision) ||
+        _messageSubEpoch != msgEpoch ||
+        (isUnauthenticatedPublic && _isPublicMessagesSuperseded)) {
       return;
     }
     _messagesSub = ds
         .subscribeMessages(groupId: groupId, currentUserId: userId)
         .listen(
       (msg) {
-        if (_disposed) return;
+        if (_disposed ||
+            (expectedRevision != null && _authRevision != expectedRevision) ||
+            _messageSubEpoch != msgEpoch) {
+          return;
+        }
         final alreadyExists = _messages.any((m) => m.id == msg.id);
         if (alreadyExists) return;
         // 直前にローカル楽観追加した同一メッセージとの重複を回避
@@ -1195,6 +1240,7 @@ class CitizenStore extends ChangeNotifier {
   void _resetLocalSessionState({required bool signOutRemote}) {
     if (_disposed) return;
     final rev = ++_authRevision;
+    _messageSubEpoch++;
     _safetyRequestSeq++;
     _profileRequestSeq++;
     _fieldDirtySeq.clear();
@@ -1240,7 +1286,9 @@ class CitizenStore extends ChangeNotifier {
           } catch (e) {
             appLog('MAMO サインアウトエラー: $e');
           }
-          if (_disposed || _authRevision != rev || _isLoggedIn) return;
+          if (_disposed || _authRevision != rev || _isPublicMessagesSuperseded) {
+            return;
+          }
           if (dataSource != null) {
             try {
               await _subscribeMessagesStream(
@@ -1292,6 +1340,7 @@ class CitizenStore extends ChangeNotifier {
     if (_disposed) return;
     _disposed = true;
     _authRevision++;
+    _messageSubEpoch++;
     _safetyRequestSeq++;
     _profileRequestSeq++;
     _fieldDirtySeq.clear();
