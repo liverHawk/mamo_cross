@@ -190,6 +190,20 @@ class CitizenStore extends ChangeNotifier {
     _fieldDirtySeq.removeWhere((_, seq) => seq == exactSeq);
   }
 
+  void _rollbackFailedProfileSave(int reqSeq) {
+    _clearDirtyFieldsAtExactSeq(reqSeq);
+    _profile = _mergeProfile(
+      base: _lastSyncedProfile,
+      overlay: _profile,
+      overlayFields: _fieldDirtySeq.keys,
+    );
+    if (_profileRequestSeq == reqSeq) {
+      showToast('登録情報の保存に失敗しました');
+    } else {
+      notifyListeners();
+    }
+  }
+
   void goToScreen(CitizenScreen screen) {
     if (_disposed) return;
     if (_currentScreen == screen) return;
@@ -692,19 +706,7 @@ class CitizenStore extends ChangeNotifier {
       }
       if (_disposed || _authRevision != rev) return false;
       if (uid == null) {
-        _clearDirtyFieldsAtExactSeq(reqSeq);
-        if (_profileRequestSeq == reqSeq) {
-          _profile = _lastSyncedProfile;
-          _clearDirtyFieldsUpTo(reqSeq);
-          showToast('登録情報の保存に失敗しました');
-        } else {
-          _profile = _mergeProfile(
-            base: _lastSyncedProfile,
-            overlay: _profile,
-            overlayFields: _fieldDirtySeq.keys,
-          );
-          notifyListeners();
-        }
+        _rollbackFailedProfileSave(reqSeq);
         return false;
       }
 
@@ -745,19 +747,7 @@ class CitizenStore extends ChangeNotifier {
       } catch (e) {
         appLog('MAMO プロフィール保存エラー: $e');
         if (_disposed || _authRevision != rev) return false;
-        _clearDirtyFieldsAtExactSeq(reqSeq);
-        if (_profileRequestSeq == reqSeq) {
-          _profile = _lastSyncedProfile;
-          _clearDirtyFieldsUpTo(reqSeq);
-          showToast('登録情報の保存に失敗しました');
-        } else {
-          _profile = _mergeProfile(
-            base: _lastSyncedProfile,
-            overlay: _profile,
-            overlayFields: _fieldDirtySeq.keys,
-          );
-          notifyListeners();
-        }
+        _rollbackFailedProfileSave(reqSeq);
         return false;
       }
     });
