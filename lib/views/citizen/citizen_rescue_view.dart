@@ -73,6 +73,10 @@ class _CitizenRescueViewState extends State<CitizenRescueView> {
   }
 
   void _syncFromStore() {
+    if (_detailOptions.contains(widget.citizenStore.rescueDetailDraft) &&
+        _otherSelected) {
+      _otherSelected = false;
+    }
     if (_nameController.text != widget.citizenStore.rescueNameDraft) {
       _nameController.text = widget.citizenStore.rescueNameDraft;
     }

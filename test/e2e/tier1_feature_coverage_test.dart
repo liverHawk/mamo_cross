@@ -921,6 +921,29 @@ void main() {
       }
     }
 
+    testWidgets('T1-F10-05: 救助内容のラジオ選択肢が受付カードに反映され自由記述欄は非表示', (
+      tester,
+    ) async {
+      await pumpMamoApp(
+        tester,
+        viewport: kMobileViewportSize,
+        navigateTo: MamoAppMode.citizen,
+      );
+      await loginAsGuest(tester);
+      await scrollAndTap(tester, find.text('救助要請'));
+      expect(find.byType(RadioListTile<String>), findsNWidgets(5));
+      expect(find.textContaining('建物内に閉じ込め', findRichText: false), findsWidgets);
+      await scrollAndTap(tester, find.text('けが人がいる'));
+      expect(find.widgetWithText(TextField, ''), findsWidgets);
+      await scrollAndTap(
+        tester,
+        find.textContaining('救助要請を送信'),
+        settle: false,
+      );
+      await pumpPastToasts(tester);
+      expect(find.textContaining('けが人がいる'), findsAtLeastNWidgets(1));
+    });
+
     testWidgets('T1-F10-01: 完了アイコン (✓)・見出し・説明文が表示される', (tester) async {
       await sendSosAndReachSent(tester);
 
