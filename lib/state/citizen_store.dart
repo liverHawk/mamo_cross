@@ -9,6 +9,20 @@ import '../services/citizen_data_source.dart';
 import 'rescue_store.dart';
 import '../utils/app_logger.dart';
 
+enum _CitizenProfileField {
+  photoSelected,
+  idDocSelected,
+  name,
+  birthDate,
+  bloodType,
+  gender,
+  postalCode,
+  prefecture,
+  addressDetail,
+  considerations,
+  otherConsideration,
+}
+
 /// 利用者（住民・スマホ）側の状態管理ストア
 class CitizenStore extends ChangeNotifier {
   CitizenStore({
@@ -67,6 +81,8 @@ class CitizenStore extends ChangeNotifier {
   int _authRevision = 0;
   int _safetyRequestSeq = 0;
   int _profileRequestSeq = 0;
+  final Map<_CitizenProfileField, int> _fieldDirtySeq =
+      <_CitizenProfileField, int>{};
   bool _disposed = false;
 
   CitizenScreen get currentScreen => _currentScreen;
@@ -122,6 +138,56 @@ class CitizenStore extends ChangeNotifier {
     final next = _authOpChain.then((_) => op(), onError: (_) => op());
     _authOpChain = next.then((_) {}, onError: (_) {});
     return next;
+  }
+
+  CitizenRegistrationProfile _mergeProfile({
+    required CitizenRegistrationProfile base,
+    required CitizenRegistrationProfile overlay,
+    required Iterable<_CitizenProfileField> overlayFields,
+  }) {
+    final fields = overlayFields.toSet();
+    if (fields.isEmpty) return base;
+    return base.copyWith(
+      photoSelected: fields.contains(_CitizenProfileField.photoSelected)
+          ? overlay.photoSelected
+          : null,
+      idDocSelected: fields.contains(_CitizenProfileField.idDocSelected)
+          ? overlay.idDocSelected
+          : null,
+      name: fields.contains(_CitizenProfileField.name) ? overlay.name : null,
+      birthDate: fields.contains(_CitizenProfileField.birthDate)
+          ? overlay.birthDate
+          : null,
+      bloodType: fields.contains(_CitizenProfileField.bloodType)
+          ? overlay.bloodType
+          : null,
+      gender:
+          fields.contains(_CitizenProfileField.gender) ? overlay.gender : null,
+      postalCode: fields.contains(_CitizenProfileField.postalCode)
+          ? overlay.postalCode
+          : null,
+      prefecture: fields.contains(_CitizenProfileField.prefecture)
+          ? overlay.prefecture
+          : null,
+      addressDetail: fields.contains(_CitizenProfileField.addressDetail)
+          ? overlay.addressDetail
+          : null,
+      considerations: fields.contains(_CitizenProfileField.considerations)
+          ? overlay.considerations
+          : null,
+      otherConsideration:
+          fields.contains(_CitizenProfileField.otherConsideration)
+              ? overlay.otherConsideration
+              : null,
+    );
+  }
+
+  void _clearDirtyFieldsUpTo(int maxSeq) {
+    _fieldDirtySeq.removeWhere((_, seq) => seq <= maxSeq);
+  }
+
+  void _clearDirtyFieldsAtExactSeq(int exactSeq) {
+    _fieldDirtySeq.removeWhere((_, seq) => seq == exactSeq);
   }
 
   void goToScreen(CitizenScreen screen) {
@@ -265,6 +331,7 @@ class CitizenStore extends ChangeNotifier {
     }
 
     if (forceUpsertProfile) {
+      final reqSeqAtStart = _profileRequestSeq;
       final targetProfile = _profile;
       final targetSafety = _mySafety;
       await ds.upsertProfile(
@@ -278,18 +345,31 @@ class CitizenStore extends ChangeNotifier {
       }
       _lastSyncedProfile = targetProfile;
       _lastSyncedSafety = targetSafety;
+      _clearDirtyFieldsUpTo(reqSeqAtStart);
     } else {
+      final safetySeqBeforeFetch = _safetyRequestSeq;
       final existing = await ds.fetchProfile(userId);
       if (_disposed ||
           (expectedRevision != null && _authRevision != expectedRevision)) {
         return;
       }
       if (existing != null) {
-        _profile = existing.profile;
         _lastSyncedProfile = existing.profile;
-        _mySafety = existing.safety;
+        if (_fieldDirtySeq.isEmpty) {
+          _profile = existing.profile;
+        } else {
+          _profile = _mergeProfile(
+            base: existing.profile,
+            overlay: _profile,
+            overlayFields: _fieldDirtySeq.keys,
+          );
+        }
         _lastSyncedSafety = existing.safety;
+        if (_safetyRequestSeq == safetySeqBeforeFetch) {
+          _mySafety = existing.safety;
+        }
       } else {
+        final reqSeqAtStart = _profileRequestSeq;
         final targetProfile = _profile;
         final targetSafety = _mySafety;
         await ds.upsertProfile(
@@ -303,6 +383,7 @@ class CitizenStore extends ChangeNotifier {
         }
         _lastSyncedProfile = targetProfile;
         _lastSyncedSafety = targetSafety;
+        _clearDirtyFieldsUpTo(reqSeqAtStart);
       }
     }
 
@@ -521,12 +602,16 @@ class CitizenStore extends ChangeNotifier {
 
   void selectPhotoDemo() {
     if (_disposed) return;
+    final seq = ++_profileRequestSeq;
+    _fieldDirtySeq[_CitizenProfileField.photoSelected] = seq;
     _profile = _profile.copyWith(photoSelected: true);
     showToast('デモ：写真アップロード画面を想定しています');
   }
 
   void selectIdDocDemo() {
     if (_disposed) return;
+    final seq = ++_profileRequestSeq;
+    _fieldDirtySeq[_CitizenProfileField.idDocSelected] = seq;
     _profile = _profile.copyWith(idDocSelected: true);
     showToast('デモ：身分証選択');
   }
@@ -541,7 +626,24 @@ class CitizenStore extends ChangeNotifier {
     String? addressDetail,
   }) {
     if (_disposed) return;
-    _profileRequestSeq++;
+    final seq = ++_profileRequestSeq;
+    if (name != null) _fieldDirtySeq[_CitizenProfileField.name] = seq;
+    if (birthDate != null) {
+      _fieldDirtySeq[_CitizenProfileField.birthDate] = seq;
+    }
+    if (bloodType != null) {
+      _fieldDirtySeq[_CitizenProfileField.bloodType] = seq;
+    }
+    if (gender != null) _fieldDirtySeq[_CitizenProfileField.gender] = seq;
+    if (postalCode != null) {
+      _fieldDirtySeq[_CitizenProfileField.postalCode] = seq;
+    }
+    if (prefecture != null) {
+      _fieldDirtySeq[_CitizenProfileField.prefecture] = seq;
+    }
+    if (addressDetail != null) {
+      _fieldDirtySeq[_CitizenProfileField.addressDetail] = seq;
+    }
     _profile = _profile.copyWith(
       name: name,
       birthDate: birthDate,
@@ -560,16 +662,22 @@ class CitizenStore extends ChangeNotifier {
     String? addressDetail,
   }) async {
     if (_disposed) return false;
-    final targetProfile = _profile.copyWith(
+    final reqSeq = ++_profileRequestSeq;
+    if (name != null) {
+      _fieldDirtySeq[_CitizenProfileField.name] = reqSeq;
+    }
+    if (addressDetail != null) {
+      _fieldDirtySeq[_CitizenProfileField.addressDetail] = reqSeq;
+    }
+    _profile = _profile.copyWith(
       name: name,
       addressDetail: addressDetail,
     );
-    final reqSeq = ++_profileRequestSeq;
-    _profile = targetProfile;
 
     final ds = dataSource;
     if (ds == null) {
-      _lastSyncedProfile = targetProfile;
+      _lastSyncedProfile = _profile;
+      _clearDirtyFieldsUpTo(reqSeq);
       showToast('登録情報を保存しました');
       return true;
     }
@@ -584,12 +692,34 @@ class CitizenStore extends ChangeNotifier {
       }
       if (_disposed || _authRevision != rev) return false;
       if (uid == null) {
+        _clearDirtyFieldsAtExactSeq(reqSeq);
         if (_profileRequestSeq == reqSeq) {
           _profile = _lastSyncedProfile;
+          _clearDirtyFieldsUpTo(reqSeq);
           showToast('登録情報の保存に失敗しました');
+        } else {
+          _profile = _mergeProfile(
+            base: _lastSyncedProfile,
+            overlay: _profile,
+            overlayFields: _fieldDirtySeq.keys,
+          );
+          notifyListeners();
         }
         return false;
       }
+
+      final priorDirtyFields = _fieldDirtySeq.entries
+          .where((e) => e.value < reqSeq)
+          .map((e) => e.key);
+      final base = _mergeProfile(
+        base: _lastSyncedProfile,
+        overlay: _profile,
+        overlayFields: priorDirtyFields,
+      );
+      final targetProfile = base.copyWith(
+        name: name,
+        addressDetail: addressDetail,
+      );
 
       try {
         await ds.upsertProfile(
@@ -599,16 +729,34 @@ class CitizenStore extends ChangeNotifier {
         );
         if (_disposed || _authRevision != rev) return false;
         _lastSyncedProfile = targetProfile;
+        _clearDirtyFieldsUpTo(reqSeq);
         if (_profileRequestSeq == reqSeq) {
+          _profile = targetProfile;
           showToast('登録情報を保存しました');
+        } else {
+          _profile = _mergeProfile(
+            base: _lastSyncedProfile,
+            overlay: _profile,
+            overlayFields: _fieldDirtySeq.keys,
+          );
+          notifyListeners();
         }
         return true;
       } catch (e) {
         appLog('MAMO プロフィール保存エラー: $e');
         if (_disposed || _authRevision != rev) return false;
+        _clearDirtyFieldsAtExactSeq(reqSeq);
         if (_profileRequestSeq == reqSeq) {
           _profile = _lastSyncedProfile;
+          _clearDirtyFieldsUpTo(reqSeq);
           showToast('登録情報の保存に失敗しました');
+        } else {
+          _profile = _mergeProfile(
+            base: _lastSyncedProfile,
+            overlay: _profile,
+            overlayFields: _fieldDirtySeq.keys,
+          );
+          notifyListeners();
         }
         return false;
       }
@@ -617,7 +765,8 @@ class CitizenStore extends ChangeNotifier {
 
   void toggleConsideration(String option) {
     if (_disposed) return;
-    _profileRequestSeq++;
+    final seq = ++_profileRequestSeq;
+    _fieldDirtySeq[_CitizenProfileField.considerations] = seq;
     final next = Set<String>.from(_profile.considerations);
     if (!next.add(option)) {
       next.remove(option);
@@ -628,14 +777,16 @@ class CitizenStore extends ChangeNotifier {
 
   void updateOtherConsideration(String text) {
     if (_disposed) return;
-    _profileRequestSeq++;
+    final seq = ++_profileRequestSeq;
+    _fieldDirtySeq[_CitizenProfileField.otherConsideration] = seq;
     _profile = _profile.copyWith(otherConsideration: text);
     notifyListeners();
   }
 
   void completeRegistration() {
     if (_disposed) return;
-    _profileRequestSeq++;
+    final seq = ++_profileRequestSeq;
+    _fieldDirtySeq[_CitizenProfileField.name] = seq;
     _profile = _profile.copyWith(name: _profile.name.trim());
     _isLoggedIn = true;
     _currentScreen = CitizenScreen.home;
@@ -701,6 +852,10 @@ class CitizenStore extends ChangeNotifier {
           await ds.updateSafetyStatus(userId: uid, status: status);
           if (_disposed || _authRevision != rev) return;
           _lastSyncedSafety = status;
+          if (_safetyRequestSeq == reqSeq) {
+            _applyLocalSafetyStatus(status);
+            notifyListeners();
+          }
         } catch (e) {
           appLog('MAMO 安否更新エラー: $e');
           if (_disposed ||
@@ -1052,6 +1207,7 @@ class CitizenStore extends ChangeNotifier {
     final rev = ++_authRevision;
     _safetyRequestSeq++;
     _profileRequestSeq++;
+    _fieldDirtySeq.clear();
 
     _toastTimer?.cancel();
     _toastTimer = null;
@@ -1148,6 +1304,7 @@ class CitizenStore extends ChangeNotifier {
     _authRevision++;
     _safetyRequestSeq++;
     _profileRequestSeq++;
+    _fieldDirtySeq.clear();
     _toastTimer?.cancel();
     _toastTimer = null;
     _demoLoginTimer?.cancel();
