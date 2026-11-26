@@ -162,8 +162,9 @@ class RescueRequest {
   static ({double latitude, double longitude})? parseCoordinates(
     Map<String, dynamic> row,
   ) {
-    final rawLat = row['latitude'] ?? row['lat'];
-    final rawLng = row['longitude'] ?? row['lng'] ?? row['lon'];
+    final rawLat = _firstPresentCoordinate([row['latitude'], row['lat']]);
+    final rawLng =
+        _firstPresentCoordinate([row['longitude'], row['lng'], row['lon']]);
     if (rawLat == null || rawLng == null) return null;
 
     final lat = rawLat is num
@@ -179,6 +180,17 @@ class RescueRequest {
       return null;
     }
     return (latitude: lat, longitude: lng);
+  }
+
+  static Object? _firstPresentCoordinate(List<Object?> candidates) {
+    for (final candidate in candidates) {
+      if (candidate == null) continue;
+      if (candidate is num) return candidate;
+      if (candidate.toString().trim().isNotEmpty) {
+        return candidate;
+      }
+    }
+    return null;
   }
 
   /// 住所文字列に含まれる山口県内市町名から代表座標を解決
