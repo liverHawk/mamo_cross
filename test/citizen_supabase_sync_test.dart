@@ -87,6 +87,9 @@ class _MockCitizenDataSource implements CitizenDataSource {
   Completer<void>? defaultGroupCompleter;
   Completer<void>? fetchProfileCompleter;
   Object? fetchProfileError;
+  Future<void> Function(String? groupId, String? currentUserId)? onFetchMessages;
+  final List<String?> subscribeMessagesGroupIds = <String?>[];
+  List<CitizenMessage> Function(String? groupId)? fetchMessagesResponder;
 
   FamilyGroupInfo defaultGroup = const FamilyGroupInfo(
     id: 'group-1',
@@ -194,6 +197,12 @@ class _MockCitizenDataSource implements CitizenDataSource {
     String? groupId,
     String? currentUserId,
   }) async {
+    if (onFetchMessages != null) {
+      await onFetchMessages!(groupId, currentUserId);
+    }
+    if (fetchMessagesResponder != null) {
+      return fetchMessagesResponder!(groupId);
+    }
     return const [
       CitizenMessage(
         id: 'notice-db-1',
@@ -211,8 +220,10 @@ class _MockCitizenDataSource implements CitizenDataSource {
   Stream<CitizenMessage> subscribeMessages({
     String? groupId,
     String? currentUserId,
-  }) =>
-      messageController.stream;
+  }) {
+    subscribeMessagesGroupIds.add(groupId);
+    return messageController.stream;
+  }
 
   @override
   Future<CitizenMessage?> sendMessage({
@@ -1679,6 +1690,227 @@ void main() {
         expect(store.profile.birthDate, '1995-05-05');
         expect(ds.storedProfile?.profile.birthDate, '1995-05-05');
         expect(ds.storedProfile?.profile.addressDetail, '成功住所');
+      },
+    );
+  });
+
+  group('Challenge 4 regression tests (initializeRemote vs auth/message subscription races)', () {
+    test(
+      'R2-1F-2: demoLogin completing while initializeRemote public fetchMessages(groupId: null) is pending is not overwritten by stale public subscription',
+      () async {
+        final auth = _MockAuthService();
+        final ds = _MockCitizenDataSource();
+        final publicSubFetchCompleter = Completer<void>();
+        var publicFetchCalls = 0;
+
+        ds.onFetchMessages = (groupId, currentUserId) async {
+          if (groupId == null && currentUserId == null) {
+            publicFetchCalls++;
+            if (publicFetchCalls == 2) {
+              await publicSubFetchCompleter.future;
+            }
+          }
+        };
+        ds.fetchMessagesResponder = (groupId) {
+          if (groupId == null) {
+            return const [
+              CitizenMessage(
+                id: 'stale-public',
+                kind: CitizenMessageKind.municipalityNotice,
+                sender: '自治体',
+                avatar: '🏛️',
+                body: '古い公開メッセージ',
+                time: '09:00',
+              ),
+            ];
+          }
+          return const [
+            CitizenMessage(
+              id: 'fam-init-1',
+              kind: CitizenMessageKind.familyThread,
+              sender: '家族',
+              avatar: '👩',
+              body: '家族スレッド初期メッセージ',
+              time: '10:00',
+            ),
+          ];
+        };
+
+        final store = CitizenStore(
+          dataSource: ds,
+          authService: auth,
+          autoInitialize: false,
+        );
+        addTearDown(store.dispose);
+
+        final initFuture = store.initializeRemote();
+        await pumpEventQueue(times: 10);
+        expect(publicFetchCalls, 2);
+
+        // 公開 fetchMessages 完了前でも demoLogin はブロックされず家族購読へ移行できること
+        store.demoLogin(delay: Duration.zero);
+        await pumpEventQueue(times: 20);
+        expect(store.isLoggedIn, isTrue);
+        expect(store.familyInviteCode, 'MAMO99');
+        expect(ds.subscribeMessagesGroupIds, ['group-1']);
+
+        // 遅延していた公開 fetchMessages が後から完了しても家族購読・メッセージを上書きしないこと
+        publicSubFetchCompleter.complete();
+        await initFuture;
+
+        expect(ds.subscribeMessagesGroupIds, ['group-1']);
+        expect(store.messages.any((m) => m.id == 'stale-public'), isFalse);
+        expect(store.familyMessages.any((m) => m.id == 'fam-init-1'), isTrue);
+
+        ds.messageController.add(const CitizenMessage(
+          id: 'fam-live-1',
+          kind: CitizenMessageKind.familyThread,
+          sender: 'お母さん',
+          avatar: '👩',
+          body: '無事に着きました',
+          time: '10:05',
+        ));
+        await pumpEventQueue();
+        expect(store.familyMessages.any((m) => m.id == 'fam-live-1'), isTrue);
+      },
+    );
+
+    test(
+      'initializeRemote Future.wait completing after demoLogin and joinFamilyGroup(JOIN77) does not revert family group or messages',
+      () async {
+        final auth = _MockAuthService();
+        final ds = _MockCitizenDataSource();
+        final futureWaitCompleter = Completer<void>();
+
+        ds.onFetchMessages = (groupId, currentUserId) async {
+          if (groupId == null) {
+            await futureWaitCompleter.future;
+          }
+        };
+        ds.fetchMessagesResponder = (groupId) {
+          if (groupId == 'group-2') {
+            return const [
+              CitizenMessage(
+                id: 'group2-msg-1',
+                kind: CitizenMessageKind.familyThread,
+                sender: '招待家族',
+                avatar: '👨',
+                body: 'グループ2メッセージ',
+                time: '10:10',
+              ),
+            ];
+          }
+          if (groupId == 'group-1') {
+            return const [
+              CitizenMessage(
+                id: 'group1-msg-1',
+                kind: CitizenMessageKind.familyThread,
+                sender: '初期家族',
+                avatar: '👩',
+                body: 'グループ1メッセージ',
+                time: '10:05',
+              ),
+            ];
+          }
+          return const [
+            CitizenMessage(
+              id: 'stale-public-wait',
+              kind: CitizenMessageKind.municipalityNotice,
+              sender: '自治体',
+              avatar: '🏛️',
+              body: '遅延した公開お知らせ',
+              time: '09:00',
+            ),
+          ];
+        };
+
+        final store = CitizenStore(
+          dataSource: ds,
+          authService: auth,
+          autoInitialize: false,
+        );
+        addTearDown(store.dispose);
+
+        final initFuture = store.initializeRemote();
+        await pumpEventQueue(times: 5);
+
+        store.demoLogin(delay: Duration.zero);
+        final joined = await store.joinFamilyGroup('JOIN77');
+        expect(joined, isTrue);
+        expect(store.familyInviteCode, 'JOIN77');
+        expect(ds.subscribeMessagesGroupIds, ['group-1', 'group-2']);
+
+        futureWaitCompleter.complete();
+        await initFuture;
+
+        expect(store.familyInviteCode, 'JOIN77');
+        expect(ds.subscribeMessagesGroupIds.last, 'group-2');
+        expect(store.messages.any((m) => m.id == 'stale-public-wait'), isFalse);
+        expect(store.messages.any((m) => m.id == 'group2-msg-1'), isTrue);
+      },
+    );
+
+    test(
+      'logout during in-flight group-1 fetchMessages discards stale family subscription and restores public groupId: null subscription',
+      () async {
+        final auth = _MockAuthService();
+        final ds = _MockCitizenDataSource();
+        final groupFetchCompleter = Completer<void>();
+
+        ds.onFetchMessages = (groupId, currentUserId) async {
+          if (groupId == 'group-1') {
+            await groupFetchCompleter.future;
+          }
+        };
+        ds.fetchMessagesResponder = (groupId) {
+          if (groupId == 'group-1') {
+            return const [
+              CitizenMessage(
+                id: 'stale-family-1',
+                kind: CitizenMessageKind.familyThread,
+                sender: '家族',
+                avatar: '👩',
+                body: '古い家族メッセージ',
+                time: '10:00',
+              ),
+            ];
+          }
+          return const [
+            CitizenMessage(
+              id: 'notice-public-1',
+              kind: CitizenMessageKind.municipalityNotice,
+              sender: '山口県 災害対策本部',
+              avatar: '🏛️',
+              body: '公開お知らせ復帰',
+              time: '10:15',
+            ),
+          ];
+        };
+
+        final store = CitizenStore(
+          dataSource: ds,
+          authService: auth,
+          autoInitialize: false,
+        );
+        addTearDown(store.dispose);
+
+        store.demoLogin(delay: Duration.zero);
+        await pumpEventQueue(times: 10);
+
+        // group-1 の fetchMessages 待機中に logout() を実行
+        store.logout();
+        expect(store.isLoggedIn, isFalse);
+        expect(store.familyGroupName, isNull);
+
+        groupFetchCompleter.complete();
+        await pumpEventQueue(times: 20);
+
+        expect(store.isLoggedIn, isFalse);
+        expect(store.familyGroupName, isNull);
+        expect(ds.subscribeMessagesGroupIds, [null]);
+        expect(store.familyMessages, isEmpty);
+        expect(store.messages.any((m) => m.id == 'stale-family-1'), isFalse);
+        expect(store.municipalityNotices.single.id, 'notice-public-1');
       },
     );
   });
