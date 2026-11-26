@@ -18,6 +18,7 @@ class _MockAuthService implements AuthService {
   String? _userId;
   int signInCalls = 0;
   int signOutCalls = 0;
+  bool returnNullOnSignIn = false;
   Completer<void>? signOutCompleter;
   final List<String> eventLog = <String>[];
   final StreamController<String?> _controller =
@@ -36,6 +37,9 @@ class _MockAuthService implements AuthService {
   Future<String?> ensureAnonymousSession() async {
     signInCalls++;
     eventLog.add('signIn');
+    if (returnNullOnSignIn) {
+      return null;
+    }
     _userId ??= 'anon-user-1';
     _controller.add(_userId);
     return _userId;
@@ -1380,6 +1384,301 @@ void main() {
         });
 
         await tester.pump(const Duration(seconds: 3));
+      },
+    );
+
+    test(
+      'Regression 7 (R2-1D): failed saveProfileEdits preserves prior dirty fields and persists them on subsequent save',
+      () async {
+        final auth = _MockAuthService();
+        final ds = _MockCitizenDataSource();
+        ds.storedProfile = (
+          profile: const CitizenRegistrationProfile(
+            name: 'DB旧名',
+            birthDate: '1980-01-01',
+            bloodType: 'A型',
+            addressDetail: 'DB旧住所',
+          ),
+          safety: CitizenSafetyStatus.safe,
+        );
+
+        final store = CitizenStore(
+          dataSource: ds,
+          authService: auth,
+          autoInitialize: false,
+        );
+        addTearDown(store.dispose);
+
+        store.demoLogin(delay: Duration.zero);
+        await pumpEventQueue(times: 20);
+
+        store.updateBasicInfo(
+          birthDate: '1995-05-05',
+          bloodType: 'O型',
+          gender: '女性',
+          postalCode: '753-0001',
+          prefecture: '山口県',
+        );
+        store.toggleConsideration(kCitizenConsiderationOptions[0]);
+        store.updateOtherConsideration('喘息あり');
+        store.selectPhotoDemo();
+        store.selectIdDocDemo();
+
+        ds.upsertProfileError = StateError('save failed');
+        final failed = await store.saveProfileEdits(name: '失敗名');
+
+        expect(failed, isFalse);
+        expect(store.profile.name, 'DB旧名');
+        expect(store.profile.addressDetail, 'DB旧住所');
+        expect(store.profile.birthDate, '1995-05-05');
+        expect(store.profile.bloodType, 'O型');
+        expect(store.profile.gender, '女性');
+        expect(store.profile.postalCode, '753-0001');
+        expect(store.profile.prefecture, '山口県');
+        expect(
+          store.profile.considerations,
+          <String>{kCitizenConsiderationOptions[0]},
+        );
+        expect(store.profile.otherConsideration, '喘息あり');
+        expect(store.profile.photoSelected, isTrue);
+        expect(store.profile.idDocSelected, isTrue);
+        expect(store.toastMessage, '登録情報の保存に失敗しました');
+
+        ds.upsertProfileError = null;
+        final succeeded = await store.saveProfileEdits(addressDetail: '新住所');
+        expect(succeeded, isTrue);
+        expect(ds.storedProfile?.profile.name, 'DB旧名');
+        expect(ds.storedProfile?.profile.addressDetail, '新住所');
+        expect(ds.storedProfile?.profile.birthDate, '1995-05-05');
+        expect(ds.storedProfile?.profile.bloodType, 'O型');
+        expect(ds.storedProfile?.profile.gender, '女性');
+        expect(ds.storedProfile?.profile.postalCode, '753-0001');
+        expect(ds.storedProfile?.profile.prefecture, '山口県');
+        expect(
+          ds.storedProfile?.profile.considerations,
+          <String>{kCitizenConsiderationOptions[0]},
+        );
+        expect(ds.storedProfile?.profile.otherConsideration, '喘息あり');
+      },
+    );
+
+    test(
+      'Regression 8 (R2-1D same-field edge): prior updateBasicInfo(name) overwritten by failed saveProfileEdits(name) rolls back name to _lastSyncedProfile while keeping other prior dirty fields',
+      () async {
+        final auth = _MockAuthService();
+        final ds = _MockCitizenDataSource();
+        ds.storedProfile = (
+          profile: const CitizenRegistrationProfile(
+            name: 'DB旧名',
+            birthDate: '1980-01-01',
+          ),
+          safety: CitizenSafetyStatus.safe,
+        );
+
+        final store = CitizenStore(
+          dataSource: ds,
+          authService: auth,
+          autoInitialize: false,
+        );
+        addTearDown(store.dispose);
+
+        store.demoLogin(delay: Duration.zero);
+        await pumpEventQueue(times: 20);
+
+        store.updateBasicInfo(name: '途中名', birthDate: '1995-05-05');
+        ds.upsertProfileError = StateError('save failed');
+        final ok = await store.saveProfileEdits(name: '失敗名');
+
+        expect(ok, isFalse);
+        expect(store.profile.name, 'DB旧名');
+        expect(store.profile.birthDate, '1995-05-05');
+        expect(store.toastMessage, '登録情報の保存に失敗しました');
+      },
+    );
+
+    test(
+      'Regression 9 (R2-1D-uidNull): saveProfileEdits failing with uid == null rolls back only passed fields and preserves prior dirty fields',
+      () async {
+        final auth = _MockAuthService()..returnNullOnSignIn = true;
+        final ds = _MockCitizenDataSource();
+        final store = CitizenStore(
+          dataSource: ds,
+          authService: auth,
+          autoInitialize: false,
+        );
+        addTearDown(store.dispose);
+
+        store.updateBasicInfo(
+          birthDate: '1995-05-05',
+          bloodType: 'O型',
+          addressDetail: '未保存住所',
+        );
+        final ok = await store.saveProfileEdits(name: '失敗名');
+
+        expect(ok, isFalse);
+        expect(store.profile.name, '');
+        expect(store.profile.birthDate, '1995-05-05');
+        expect(store.profile.bloodType, 'O型');
+        expect(store.profile.addressDetail, '未保存住所');
+        expect(store.toastMessage, '登録情報の保存に失敗しました');
+      },
+    );
+
+    testWidgets(
+      'Regression 10 (R2-1D-UI): CitizenReg2View/CitizenReg3View inputs survive failed CitizenSettingsTab saveProfileEdits and remain intact across views',
+      (tester) async {
+        final auth = _MockAuthService();
+        final ds = _MockCitizenDataSource();
+        ds.storedProfile = (
+          profile: const CitizenRegistrationProfile(
+            name: 'DB旧ユーザー',
+            birthDate: '1985-04-01',
+            prefecture: '山口県',
+            addressDetail: '山口市旧1-1',
+          ),
+          safety: CitizenSafetyStatus.safe,
+        );
+
+        final store = CitizenStore(
+          dataSource: ds,
+          authService: auth,
+          autoInitialize: false,
+        );
+        final rescueStore = RescueStore(startClock: false);
+        addTearDown(() async {
+          store.dispose();
+          rescueStore.dispose();
+          await tester.pump(const Duration(seconds: 3));
+        });
+
+        await tester.pumpWidget(
+          MaterialApp(
+            home: CitizenShellPage(
+              citizenStore: store,
+              rescueStore: rescueStore,
+            ),
+          ),
+        );
+
+        store.demoLogin(delay: Duration.zero);
+        await tester.pump();
+        await tester.runAsync(
+          () => Future<void>.delayed(const Duration(milliseconds: 20)),
+        );
+        await tester.pump();
+
+        // reg2 で生年月日・郵便番号を入力
+        store.goToScreen(CitizenScreen.reg2);
+        await tester.pump();
+        final reg2Fields = find.byType(TextField);
+        expect(reg2Fields, findsNWidgets(4));
+        await tester.enterText(reg2Fields.at(1), '1995-05-05');
+        await tester.enterText(reg2Fields.at(2), '753-0001');
+        await tester.pump();
+
+        // reg3 で配慮事項・自由入力を入力
+        store.goToScreen(CitizenScreen.reg3);
+        await tester.pump();
+        await tester.tap(find.text(kCitizenConsiderationOptions[1]));
+        await tester.enterText(find.byType(TextField), '喘息あり');
+        await tester.pump();
+
+        // home -> 設定 -> 編集 -> 名前のみ変更して保存失敗
+        store.goToScreen(CitizenScreen.home);
+        await tester.pump();
+        await tester.tap(find.text('設定'));
+        await tester.pump();
+        await tester.tap(find.text('編集'));
+        await tester.pump();
+
+        final settingsFields = find.byType(TextField);
+        expect(settingsFields, findsNWidgets(2));
+        await tester.enterText(settingsFields.at(0), '失敗名');
+        await tester.pump();
+
+        ds.upsertProfileError = StateError('save failed');
+        await tester.tap(find.text('保存'));
+        await tester.pump();
+        await tester.runAsync(
+          () => Future<void>.delayed(const Duration(milliseconds: 20)),
+        );
+        await tester.pump();
+
+        expect(find.text('DB旧ユーザー'), findsOneWidget);
+        expect(find.text('1995-05-05'), findsOneWidget);
+        expect(find.text('〒753-0001 山口県 山口市旧1-1'), findsOneWidget);
+        expect(find.textContaining('喘息あり'), findsOneWidget);
+        expect(find.textContaining(kCitizenConsiderationOptions[1]), findsOneWidget);
+
+        // 「基本情報登録画面を開く ›」で reg2 へ戻っても先行入力値が維持されていること
+        final openReg2Btn = find.text('基本情報登録画面を開く ›');
+        await tester.ensureVisible(openReg2Btn);
+        await tester.tap(openReg2Btn);
+        await tester.pump();
+
+        final reg2FieldsAfter = find.byType(TextField);
+        expect(
+          tester.widget<TextField>(reg2FieldsAfter.at(0)).controller?.text,
+          'DB旧ユーザー',
+        );
+        expect(
+          tester.widget<TextField>(reg2FieldsAfter.at(1)).controller?.text,
+          '1995-05-05',
+        );
+        expect(
+          tester.widget<TextField>(reg2FieldsAfter.at(2)).controller?.text,
+          '753-0001',
+        );
+        expect(
+          tester.widget<TextField>(reg2FieldsAfter.at(3)).controller?.text,
+          '山口市旧1-1',
+        );
+
+        await tester.pump(const Duration(seconds: 3));
+      },
+    );
+
+    test(
+      'Regression 11 (R2-1D concurrent): prior dirty birthDate survives parallel saveProfileEdits where one fails and another succeeds',
+      () async {
+        final auth = _MockAuthService();
+        final ds = _MockCitizenDataSource();
+        ds.storedProfile = (
+          profile: const CitizenRegistrationProfile(
+            name: 'DB旧名',
+            birthDate: '1980-01-01',
+            addressDetail: 'DB旧住所',
+          ),
+          safety: CitizenSafetyStatus.safe,
+        );
+
+        final store = CitizenStore(
+          dataSource: ds,
+          authService: auth,
+          autoInitialize: false,
+        );
+        addTearDown(store.dispose);
+
+        store.demoLogin(delay: Duration.zero);
+        await pumpEventQueue(times: 20);
+
+        store.updateBasicInfo(birthDate: '1995-05-05');
+        ds.onUpsertProfile = (profile) async {
+          if (profile.name == '失敗名') {
+            throw StateError('first failed');
+          }
+        };
+
+        final f1 = store.saveProfileEdits(name: '失敗名');
+        final f2 = store.saveProfileEdits(addressDetail: '成功住所');
+        final results = await Future.wait([f1, f2]);
+
+        expect(results, [false, true]);
+        expect(store.profile.name, 'DB旧名');
+        expect(store.profile.addressDetail, '成功住所');
+        expect(store.profile.birthDate, '1995-05-05');
+        expect(ds.storedProfile?.profile.birthDate, '1995-05-05');
+        expect(ds.storedProfile?.profile.addressDetail, '成功住所');
       },
     );
   });
