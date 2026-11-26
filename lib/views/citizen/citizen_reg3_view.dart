@@ -27,24 +27,38 @@ class _CitizenReg3ViewState extends State<CitizenReg3View> {
     super.initState();
     _otherController =
         TextEditingController(text: widget.store.profile.otherConsideration);
+    widget.store.addListener(_syncFromStore);
   }
 
   @override
   void didUpdateWidget(covariant CitizenReg3View oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.store != widget.store) {
-      final target = widget.store.profile.otherConsideration;
-      if (_otherController.text != target) {
-        _otherController.value = TextEditingValue(
-          text: target,
-          selection: TextSelection.collapsed(offset: target.length),
-        );
-      }
+      oldWidget.store.removeListener(_syncFromStore);
+      widget.store.addListener(_syncFromStore);
+      _syncControllerFromStore();
+    }
+  }
+
+  void _syncFromStore() {
+    if (!mounted) return;
+    _syncControllerFromStore();
+    setState(() {});
+  }
+
+  void _syncControllerFromStore() {
+    final target = widget.store.profile.otherConsideration;
+    if (_otherController.text != target) {
+      _otherController.value = TextEditingValue(
+        text: target,
+        selection: TextSelection.collapsed(offset: target.length),
+      );
     }
   }
 
   @override
   void dispose() {
+    widget.store.removeListener(_syncFromStore);
     _otherController.dispose();
     super.dispose();
   }

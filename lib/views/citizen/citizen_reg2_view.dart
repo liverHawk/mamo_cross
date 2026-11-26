@@ -33,18 +33,31 @@ class _CitizenReg2ViewState extends State<CitizenReg2View> {
     _birthDateController = TextEditingController(text: p.birthDate);
     _postalCodeController = TextEditingController(text: p.postalCode);
     _addressDetailController = TextEditingController(text: p.addressDetail);
+    widget.store.addListener(_syncFromStore);
   }
 
   @override
   void didUpdateWidget(covariant CitizenReg2View oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.store != widget.store) {
-      final p = widget.store.profile;
-      _syncController(_nameController, p.name);
-      _syncController(_birthDateController, p.birthDate);
-      _syncController(_postalCodeController, p.postalCode);
-      _syncController(_addressDetailController, p.addressDetail);
+      oldWidget.store.removeListener(_syncFromStore);
+      widget.store.addListener(_syncFromStore);
+      _syncControllersFromStore();
     }
+  }
+
+  void _syncFromStore() {
+    if (!mounted) return;
+    _syncControllersFromStore();
+    setState(() {});
+  }
+
+  void _syncControllersFromStore() {
+    final p = widget.store.profile;
+    _syncController(_nameController, p.name);
+    _syncController(_birthDateController, p.birthDate);
+    _syncController(_postalCodeController, p.postalCode);
+    _syncController(_addressDetailController, p.addressDetail);
   }
 
   void _syncController(TextEditingController controller, String target) {
@@ -58,6 +71,7 @@ class _CitizenReg2ViewState extends State<CitizenReg2View> {
 
   @override
   void dispose() {
+    widget.store.removeListener(_syncFromStore);
     _nameController.dispose();
     _birthDateController.dispose();
     _postalCodeController.dispose();
