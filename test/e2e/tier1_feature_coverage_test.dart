@@ -820,7 +820,7 @@ void main() {
       expect(find.textContaining('救助要請を行います'), findsOneWidget);
     });
 
-    testWidgets('T1-F09-02: 状況確認フォーム 3 項目と現在地デモボックスが表示される', (tester) async {
+    testWidgets('T1-F09-02: 状況確認フォーム 4 項目と位置情報案内ボックスが表示される', (tester) async {
       await openRescue(tester);
 
       expect(find.text('現在の状況を確認'), findsOneWidget);
@@ -828,8 +828,9 @@ void main() {
       expect(find.text('あなた'), findsAtLeastNWidgets(1));
       expect(find.text('救助内容'), findsOneWidget);
       expect(find.text('救助時の配慮事項'), findsOneWidget);
-      await tester.ensureVisible(find.textContaining('デモ位置情報'));
-      expect(find.textContaining('デモ位置情報（〇〇地区付近）'), findsOneWidget);
+      expect(find.text('現在地・住所'), findsOneWidget);
+      await tester.ensureVisible(find.textContaining('位置情報：'));
+      expect(find.textContaining('位置情報：登録済み住所が自動入力されます'), findsOneWidget);
       expect(find.textContaining('距離：自治体側で受信時に表示'), findsOneWidget);
     });
 

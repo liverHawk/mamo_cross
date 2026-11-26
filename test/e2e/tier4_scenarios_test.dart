@@ -80,12 +80,13 @@ void main() {
         expect(find.text('✓'), findsOneWidget);
         expect(find.textContaining('MAMO-'), findsOneWidget);
         expect(find.textContaining('山口 花子'), findsAtLeastNWidgets(1));
-        expect(find.textContaining('〇〇地区付近'), findsOneWidget);
+        expect(find.textContaining('山口県山口市滝町1-1'), findsOneWidget);
         expect(fakeDs.insertedPayloads, hasLength(1));
         expectValid15ColPayload(
           fakeDs.insertedPayloads.single,
           expectedName: '山口 花子',
           expectedDetail: '自宅1階で家具に挟まれ動けません',
+          expectedLocation: '山口県山口市滝町1-1',
           expectedConsiderationSubstrings: const [
             'ホルモン治療中',
             '医療的ケアが必要',
