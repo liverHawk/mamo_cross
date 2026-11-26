@@ -120,8 +120,11 @@ const List<String> kCitizenQuickReplies = <String>[
   '連絡ありがとう！',
 ];
 
+/// デフォルトのデモ位置情報（山口県山口市）
+const String kDefaultCitizenLocationNote = '山口県山口市亀山町付近';
+
 /// ホーム画面の緊急災害警報バナー文言
-const String kCitizenAlertBannerText = '⚠　〇〇地区　震度5強';
+const String kCitizenAlertBannerText = '⚠　山口市大殿地区　震度5強';
 
 /// 利用者登録プロフィール（#reg1〜#reg3）
 class CitizenRegistrationProfile {
@@ -196,6 +199,20 @@ class CitizenRegistrationProfile {
     return parts.join(' ');
   }
 
+  /// 郵便番号を除いた住所（ジオコーディング・救助要請位置表示用）
+  String get addressLine {
+    final parts = <String>[];
+    final pref = prefecture.trim();
+    if (pref.isNotEmpty && pref != '都道府県を選択') {
+      parts.add(pref);
+    }
+    final detail = addressDetail.trim();
+    if (detail.isNotEmpty) {
+      parts.add(detail);
+    }
+    return parts.join();
+  }
+
   CitizenRegistrationProfile copyWith({
     bool? photoSelected,
     bool? idDocSelected,
@@ -223,6 +240,74 @@ class CitizenRegistrationProfile {
           ? Set<String>.unmodifiable(considerations)
           : this.considerations,
       otherConsideration: otherConsideration ?? this.otherConsideration,
+    );
+  }
+
+  factory CitizenRegistrationProfile.fromSupabaseRow(Map<String, dynamic> row) {
+    final rawConsiderations = row['considerations'];
+    final considerationSet = <String>{};
+    if (rawConsiderations is Iterable) {
+      for (final item in rawConsiderations) {
+        final s = item?.toString().trim() ?? '';
+        if (s.isNotEmpty) considerationSet.add(s);
+      }
+    }
+    return CitizenRegistrationProfile(
+      name: (row['display_name'] ?? '').toString(),
+      birthDate: (row['birth_date'] ?? '').toString(),
+      bloodType: (row['blood_type'] ?? '').toString(),
+      gender: (row['gender'] ?? '').toString(),
+      postalCode: (row['postal_code'] ?? '').toString(),
+      prefecture: (row['prefecture'] ?? '').toString(),
+      addressDetail: (row['address_detail'] ?? '').toString(),
+      considerations: Set<String>.unmodifiable(considerationSet),
+      otherConsideration: (row['other_consideration'] ?? '').toString(),
+    );
+  }
+
+  Map<String, dynamic> toSupabaseUpsert(
+    String userId, {
+    required CitizenSafetyStatus safetyStatus,
+    String locationNote = kDefaultCitizenLocationNote,
+  }) {
+    return <String, dynamic>{
+      'id': userId,
+      'display_name': effectiveDisplayName,
+      'birth_date': birthDate.trim(),
+      'blood_type': bloodType.trim(),
+      'gender': gender.trim(),
+      'postal_code': postalCode.trim(),
+      'prefecture': prefecture.trim(),
+      'address_detail': addressDetail.trim(),
+      'considerations': considerations.toList(),
+      'other_consideration': otherConsideration.trim(),
+      'safety_status': safetyStatus.name,
+      'location_note': locationNote.trim().isEmpty
+          ? kDefaultCitizenLocationNote
+          : locationNote.trim(),
+      'safety_updated_at': DateTime.now().toUtc().toIso8601String(),
+      'updated_at': DateTime.now().toUtc().toIso8601String(),
+    };
+  }
+}
+
+/// 家族グループ情報
+class FamilyGroupInfo {
+  const FamilyGroupInfo({
+    required this.id,
+    required this.name,
+    required this.inviteCode,
+  });
+
+  final String id;
+  final String name;
+  final String inviteCode;
+
+  factory FamilyGroupInfo.fromSupabaseRow(Map<String, dynamic> row) {
+    return FamilyGroupInfo(
+      id: (row['id'] ?? '').toString(),
+      name: (row['name'] ?? 'マイ家族グループ').toString(),
+      inviteCode: (row['invite_code'] ?? '').toString(),
     );
   }
 }
@@ -266,6 +351,28 @@ class FamilyMember {
       locationNote: locationNote ?? this.locationNote,
     );
   }
+
+  factory FamilyMember.fromSupabaseRow(
+    Map<String, dynamic> row, {
+    String? currentUserId,
+  }) {
+    final uid = (row['user_id'] ?? '').toString();
+    final isSelf = currentUserId != null && uid == currentUserId;
+    final rawStatus = (row['safety_status'] ?? 'safe').toString();
+    final status = CitizenSafetyStatus.values.firstWhere(
+      (s) => s.name == rawStatus,
+      orElse: () => CitizenSafetyStatus.safe,
+    );
+    return FamilyMember(
+      id: (row['id'] ?? uid).toString(),
+      name: (row['display_name'] ?? (isSelf ? 'あなた' : '家族')).toString(),
+      avatar: (row['avatar'] ?? '🙂').toString(),
+      status: status,
+      isSelf: isSelf,
+      lastUpdated: _formatCitizenTime(row['safety_updated_at']),
+      locationNote: (row['location_note'] ?? '').toString(),
+    );
+  }
 }
 
 /// 初期家族メンバー 4 名（mamo-main/index.html 準拠）
@@ -276,7 +383,7 @@ List<FamilyMember> createInitialFamilyMembers() => <FamilyMember>[
         avatar: '👩',
         status: CitizenSafetyStatus.safe,
         lastUpdated: '14:15',
-        locationNote: '〇〇小学校 避難所',
+        locationNote: '大殿小学校 避難所',
       ),
       const FamilyMember(
         id: 'dad',
@@ -301,7 +408,7 @@ List<FamilyMember> createInitialFamilyMembers() => <FamilyMember>[
         status: CitizenSafetyStatus.safe,
         isSelf: true,
         lastUpdated: 'たった今',
-        locationNote: '〇〇地区付近',
+        locationNote: kDefaultCitizenLocationNote,
       ),
     ];
 
@@ -332,17 +439,49 @@ class CitizenShelter {
   final List<String> facilities;
   final double xPercent;
   final double yPercent;
+
+  factory CitizenShelter.fromSupabaseRow(Map<String, dynamic> row) {
+    final rawFacilities = row['facilities'];
+    final facilities = <String>[];
+    if (rawFacilities is Iterable) {
+      for (final f in rawFacilities) {
+        final s = f?.toString().trim() ?? '';
+        if (s.isNotEmpty) facilities.add(s);
+      }
+    }
+    return CitizenShelter(
+      id: (row['id'] ?? '').toString(),
+      name: (row['name'] ?? '').toString(),
+      distanceText: (row['distance_text'] ?? '').toString(),
+      statusText: (row['status_text'] ?? '').toString(),
+      isOpen: row['is_open'] is bool ? row['is_open'] as bool : true,
+      address: (row['address'] ?? '').toString(),
+      capacity: (row['capacity'] is num)
+          ? (row['capacity'] as num).toInt()
+          : int.tryParse('${row['capacity'] ?? 100}') ?? 100,
+      occupied: (row['occupied'] is num)
+          ? (row['occupied'] as num).toInt()
+          : int.tryParse('${row['occupied'] ?? 0}') ?? 0,
+      facilities: facilities,
+      xPercent: (row['x_percent'] is num)
+          ? (row['x_percent'] as num).toDouble()
+          : 0.5,
+      yPercent: (row['y_percent'] is num)
+          ? (row['y_percent'] as num).toDouble()
+          : 0.5,
+    );
+  }
 }
 
-/// 初期避難所リスト（最寄りは `〇〇地区 〇〇小学校` `150m先`）
+/// 初期避難所リスト（最寄りは `大殿地区 大殿小学校` `150m先`）
 const List<CitizenShelter> kInitialCitizenShelters = <CitizenShelter>[
   CitizenShelter(
     id: 'shelter_1',
-    name: '〇〇地区 〇〇小学校',
+    name: '大殿地区 大殿小学校',
     distanceText: '150m先',
     statusText: '避難所開設',
     isOpen: true,
-    address: '〇〇地区1-2-3',
+    address: '山口県山口市大殿大路120',
     capacity: 300,
     occupied: 128,
     facilities: <String>['給水', '非常電源', '医療救護', 'バリアフリー'],
@@ -351,11 +490,11 @@ const List<CitizenShelter> kInitialCitizenShelters = <CitizenShelter>[
   ),
   CitizenShelter(
     id: 'shelter_2',
-    name: '〇〇公民館（福祉避難所）',
+    name: '湯田地域交流センター（福祉避難所）',
     distanceText: '420m先',
     statusText: '避難所開設（要配慮者優先）',
     isOpen: true,
-    address: '〇〇地区2-8-10',
+    address: '山口県山口市湯田温泉5-5-15',
     capacity: 120,
     occupied: 54,
     facilities: <String>['福祉対応', '授乳室', '車椅子対応', '非常電源'],
@@ -364,11 +503,11 @@ const List<CitizenShelter> kInitialCitizenShelters = <CitizenShelter>[
   ),
   CitizenShelter(
     id: 'shelter_3',
-    name: '中央防災公園（一時避難場所）',
+    name: '亀山公園（一時避難場所）',
     distanceText: '650m先',
     statusText: '広域避難場所・給水車待機',
     isOpen: true,
-    address: '〇〇地区中央4-1',
+    address: '山口県山口市亀山町2-1',
     capacity: 800,
     occupied: 210,
     facilities: <String>['給水車', '仮設トイレ', 'ヘリポート'],
@@ -392,6 +531,20 @@ class CitizenHazardSpot {
   final String description;
   final double xPercent;
   final double yPercent;
+
+  factory CitizenHazardSpot.fromSupabaseRow(Map<String, dynamic> row) {
+    return CitizenHazardSpot(
+      id: (row['id'] ?? '').toString(),
+      title: (row['title'] ?? '').toString(),
+      description: (row['description'] ?? '').toString(),
+      xPercent: (row['x_percent'] is num)
+          ? (row['x_percent'] as num).toDouble()
+          : 0.5,
+      yPercent: (row['y_percent'] is num)
+          ? (row['y_percent'] as num).toDouble()
+          : 0.5,
+    );
+  }
 }
 
 /// 初期危険箇所リスト
@@ -399,14 +552,14 @@ const List<CitizenHazardSpot> kInitialCitizenHazards = <CitizenHazardSpot>[
   CitizenHazardSpot(
     id: 'hazard_1',
     title: 'ブロック塀倒壊のおそれ',
-    description: '〇〇小学校西側の通学路沿い・迂回推奨',
+    description: '大殿小学校西側の通学路沿い・迂回推奨',
     xPercent: 0.44,
     yPercent: 0.28,
   ),
   CitizenHazardSpot(
     id: 'hazard_2',
     title: '一部道路冠水・通行止め',
-    description: '〇〇川沿いアンダーパス通行不可',
+    description: '一の坂川沿いアンダーパス通行不可',
     xPercent: 0.72,
     yPercent: 0.55,
   ),
@@ -443,6 +596,40 @@ class CitizenMessage {
   final String time;
   final bool isMine;
   final bool isImportant;
+
+  factory CitizenMessage.fromSupabaseRow(
+    Map<String, dynamic> row, {
+    String? currentUserId,
+  }) {
+    final rawKind = (row['kind'] ?? '').toString();
+    final kind = rawKind == 'family_thread'
+        ? CitizenMessageKind.familyThread
+        : CitizenMessageKind.municipalityNotice;
+    final senderId = row['sender_id']?.toString();
+    final isMine =
+        currentUserId != null && senderId != null && senderId == currentUserId;
+    return CitizenMessage(
+      id: (row['id'] ?? '').toString(),
+      kind: kind,
+      sender: (row['sender_name'] ?? '不明').toString(),
+      avatar: (row['avatar'] ?? (kind == CitizenMessageKind.municipalityNotice ? '🏛️' : '🙂')).toString(),
+      body: (row['body'] ?? '').toString(),
+      time: _formatCitizenTime(row['created_at']),
+      isMine: isMine,
+      isImportant: row['is_important'] is bool ? row['is_important'] as bool : false,
+    );
+  }
+}
+
+String _formatCitizenTime(Object? raw) {
+  if (raw == null) return '';
+  final dt = raw is DateTime
+      ? raw.toLocal()
+      : DateTime.tryParse(raw.toString().trim())?.toLocal();
+  if (dt == null) return '';
+  final h = dt.hour.toString().padLeft(2, '0');
+  final m = dt.minute.toString().padLeft(2, '0');
+  return '$h:$m';
 }
 
 /// 初期メッセージ一覧（自治体お知らせ + 家族連絡）
@@ -450,18 +637,18 @@ List<CitizenMessage> createInitialCitizenMessages() => <CitizenMessage>[
       const CitizenMessage(
         id: 'notice_1',
         kind: CitizenMessageKind.municipalityNotice,
-        sender: '〇〇市 災害対策本部',
+        sender: '山口市 災害対策本部',
         avatar: '🏛️',
-        body: '【緊急】〇〇地区で震度5強を観測しました。〇〇地区 〇〇小学校ほか2箇所の避難所を開設しています。',
+        body: '【緊急】山口市大殿地区で震度5強を観測しました。大殿地区 大殿小学校ほか2箇所の避難所を開設しています。',
         time: '14:05',
         isImportant: true,
       ),
       const CitizenMessage(
         id: 'notice_2',
         kind: CitizenMessageKind.municipalityNotice,
-        sender: '〇〇市 防災無線',
+        sender: '山口市 防災無線',
         avatar: '📢',
-        body: '〇〇小学校にて給水および非常電源の提供を開始しました。余震にご注意ください。',
+        body: '大殿小学校にて給水および非常電源の提供を開始しました。余震にご注意ください。',
         time: '14:16',
       ),
       const CitizenMessage(
@@ -469,7 +656,7 @@ List<CitizenMessage> createInitialCitizenMessages() => <CitizenMessage>[
         kind: CitizenMessageKind.familyThread,
         sender: 'お母さん',
         avatar: '👩',
-        body: '地震大きかったね。お母さんは〇〇小学校に着きました。みんなは無事？',
+        body: '地震大きかったね。お母さんは大殿小学校に着きました。みんなは無事？',
         time: '14:15',
       ),
       const CitizenMessage(
@@ -531,8 +718,9 @@ class RescueSummary {
   }
 }
 
-/// `mamo-main/supabase_setup.sql` 準拠の厳密な 15 カラム INSERT ペイロードを生成する。
+/// `mamo-main/supabase_setup.sql` 準拠の 15 カラム INSERT ペイロードを生成する。
 ///
+/// `latitude` / `longitude` が指定された場合のみ座標カラムを追加する。
 /// `age`, `gender`, `latPercent`, `topPercent`, `id` は含めない。
 Map<String, dynamic> buildCitizenRescuePayload({
   required String requestId,
@@ -540,10 +728,12 @@ Map<String, dynamic> buildCitizenRescuePayload({
   required String requesterName,
   required String rescueDetails,
   required String considerations,
-  String locationText = '〇〇地区付近',
+  String locationText = kDefaultCitizenLocationNote,
   String distanceText = '約150m先（デモ）',
   String requestType = '救助要請',
   String status = '未対応',
+  double? latitude,
+  double? longitude,
 }) {
   final safeName =
       requesterName.trim().isEmpty ? 'あなた' : requesterName.trim();
@@ -551,12 +741,13 @@ Map<String, dynamic> buildCitizenRescuePayload({
       rescueDetails.trim().isEmpty ? '救助が必要です' : rescueDetails.trim();
   final safeCare =
       considerations.trim().isEmpty ? 'なし' : considerations.trim();
-  final safeLocation =
-      locationText.trim().isEmpty ? '〇〇地区付近' : locationText.trim();
+  final safeLocation = locationText.trim().isEmpty
+      ? kDefaultCitizenLocationNote
+      : locationText.trim();
   final safeDistance =
       distanceText.trim().isEmpty ? '約150m先（デモ）' : distanceText.trim();
 
-  return <String, dynamic>{
+  final payload = <String, dynamic>{
     'request_id': requestId,
     'created_at': createdAt.toUtc().toIso8601String(),
     'user_name': safeName,
@@ -573,4 +764,12 @@ Map<String, dynamic> buildCitizenRescuePayload({
     'distance_text': safeDistance,
     'status': status,
   };
+  if (latitude != null &&
+      longitude != null &&
+      latitude.isFinite &&
+      longitude.isFinite) {
+    payload['latitude'] = latitude;
+    payload['longitude'] = longitude;
+  }
+  return payload;
 }

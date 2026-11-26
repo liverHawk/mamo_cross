@@ -4,7 +4,9 @@ import 'package:material_ui/material_ui.dart';
 
 import '../models/citizen_models.dart';
 import '../models/rescue_request.dart';
+import '../services/address_geocoder.dart';
 import '../services/rescue_data_source.dart';
+import '../utils/app_logger.dart';
 
 /// MAMO アプリ全体の状態管理ストア
 class RescueStore extends ChangeNotifier {
@@ -12,7 +14,10 @@ class RescueStore extends ChangeNotifier {
     bool startClock = true,
     this.dataSource,
     bool autoInitialize = true,
-  }) : _requests = <RescueRequest>[] {
+    AddressGeocoder? geocoder,
+  })  : _requests = <RescueRequest>[],
+        _geocoder = geocoder ?? AddressGeocoder(),
+        _ownsGeocoder = geocoder == null {
     _updateClockValue();
     if (startClock) {
       _clockTimer = Timer.periodic(const Duration(seconds: 1), (_) {
@@ -27,6 +32,8 @@ class RescueStore extends ChangeNotifier {
   }
 
   final RescueDataSource? dataSource;
+  final AddressGeocoder _geocoder;
+  final bool _ownsGeocoder;
   MamoView _currentView = MamoView.dashboard;
   AgencyType? _currentAgencyFilter;
   RequestStatus? _statusFilter;
@@ -42,6 +49,9 @@ class RescueStore extends ChangeNotifier {
   StreamSubscription<RescueRealtimeEvent>? _realtimeSubscription;
   final StreamController<RescueRequest> _incomingAlertController =
       StreamController<RescueRequest>.broadcast();
+
+  /// `applyRemoteUpdate` で座標が更新済みの `dbId` 集合（遅延 `insertRequest` の旧座標巻き戻り防止）
+  final Set<String> _remoteUpdatedCoordDbIds = <String>{};
 
   static RescueRequest dbRowToRequest(Map<String, dynamic> row) =>
       RescueRequest.fromSupabaseRow(row);
@@ -132,7 +142,7 @@ class RescueStore extends ChangeNotifier {
         addDbRequest(row, notifyAlert: false);
       }
     } catch (e) {
-      debugPrint('MAMO DB取得エラー: $e');
+      appLog('MAMO DB取得エラー: $e');
     }
 
     if (_disposed) return;
@@ -161,7 +171,7 @@ class RescueStore extends ChangeNotifier {
               }
             },
             onError: (Object error, StackTrace stackTrace) {
-              debugPrint('MAMO Realtimeエラー: $error');
+              appLog('MAMO Realtimeエラー: $error');
               if (_disposed) return;
               if (_isRealtimeConnected) {
                 _isRealtimeConnected = false;
@@ -170,7 +180,7 @@ class RescueStore extends ChangeNotifier {
             },
           );
     } catch (e) {
-      debugPrint('MAMO Realtime購読エラー: $e');
+      appLog('MAMO Realtime購読エラー: $e');
       if (!_disposed && _isRealtimeConnected) {
         _isRealtimeConnected = false;
         notifyListeners();
@@ -199,7 +209,12 @@ class RescueStore extends ChangeNotifier {
       );
       if (localIndex != -1) {
         final localReq = _requests[localIndex];
-        _requests[localIndex] = localReq.copyWith(dbId: req.dbId);
+        final parsedCoords = RescueRequest.parseCoordinates(row);
+        _requests[localIndex] = localReq.copyWith(
+          dbId: req.dbId,
+          latitude: parsedCoords?.latitude,
+          longitude: parsedCoords?.longitude,
+        );
         notifyListeners();
         final ds = dataSource;
         if (ds != null && localReq.status != req.status) {
@@ -207,7 +222,7 @@ class RescueStore extends ChangeNotifier {
             Future<void>.sync(
               () => ds.updateStatus(dbId: req.dbId!, status: localReq.status),
             ).catchError((Object e) {
-              debugPrint('MAMO追送ステータス更新エラー: $e');
+              appLog('MAMO追送ステータス更新エラー: $e');
             }),
           );
         }
@@ -223,12 +238,49 @@ class RescueStore extends ChangeNotifier {
     _requests.insert(0, nextReq);
     _selectedId = nextReq.id;
     notifyListeners();
+    if (RescueRequest.parseCoordinates(row) == null) {
+      unawaited(
+        _resolveAccurateCoordinatesIfNeeded(
+          requestId: nextReq.id,
+          dbId: nextReq.dbId,
+          location: nextReq.location,
+        ),
+      );
+    }
     if (notifyAlert &&
         _realtimeNotification &&
         !_incomingAlertController.isClosed) {
       _incomingAlertController.add(nextReq);
     }
     return true;
+  }
+
+  Future<void> _resolveAccurateCoordinatesIfNeeded({
+    required String requestId,
+    required String? dbId,
+    required String location,
+  }) async {
+    final geocoded = await _geocoder.geocode(location);
+    if (_disposed || geocoded == null) return;
+    if (dbId != null && _remoteUpdatedCoordDbIds.contains(dbId)) return;
+
+    final index = _requests.indexWhere(
+      (v) => v.id == requestId || (dbId != null && v.dbId == dbId),
+    );
+    if (index == -1) return;
+
+    final current = _requests[index];
+    if (current.location != location) return;
+    if (current.latitude == geocoded.latitude &&
+        current.longitude == geocoded.longitude) {
+      return;
+    }
+
+    _requests[index] = current.copyWith(
+      latitude: geocoded.latitude,
+      longitude: geocoded.longitude,
+    );
+    notifyListeners();
   }
 
   void applyRemoteUpdate(Map<String, dynamic> row) {
@@ -248,9 +300,12 @@ class RescueStore extends ChangeNotifier {
       [row['requester_name'], row['user_name']],
       existing.name,
     );
-    final rawRequestType = row['request_type']?.toString().trim();
-    final nextAgency = (rawRequestType != null && rawRequestType.isNotEmpty)
-        ? RescueRequest.parseAgency(rawRequestType)
+    final rawAgency = _pickUpdatedText(
+      [row['assigned_agency'], row['request_type']],
+      '',
+    );
+    final nextAgency = rawAgency.isNotEmpty
+        ? RescueRequest.parseAgency(rawAgency)
         : existing.agency;
     final nextLocation = _pickUpdatedText(
       [row['location_text'], row['location']],
@@ -268,6 +323,18 @@ class RescueStore extends ChangeNotifier {
       [row['considerations'], row['health_condition'], row['consideration']],
       existing.consideration,
     );
+    final nextLatPercent = _parseRemotePercent(
+      row['lat_percent'],
+      existing.latPercent,
+    );
+    final nextTopPercent = _parseRemotePercent(
+      row['top_percent'],
+      existing.topPercent,
+    );
+    final nextCoords = RescueRequest.parseCoordinates(row);
+    if (nextCoords != null) {
+      _remoteUpdatedCoordDbIds.add(rawDbId);
+    }
 
     _requests[index] = existing.copyWith(
       status: nextStatus,
@@ -277,8 +344,34 @@ class RescueStore extends ChangeNotifier {
       distance: nextDistance,
       content: nextContent,
       consideration: nextConsideration,
+      latPercent: nextLatPercent,
+      topPercent: nextTopPercent,
+      latitude: nextCoords?.latitude,
+      longitude: nextCoords?.longitude,
     );
     notifyListeners();
+    if (nextCoords == null && nextLocation != existing.location) {
+      unawaited(
+        _resolveAccurateCoordinatesIfNeeded(
+          requestId: existing.id,
+          dbId: rawDbId,
+          location: nextLocation,
+        ),
+      );
+    }
+  }
+
+  static double _parseRemotePercent(Object? value, double fallback) {
+    if (value is num && value.isFinite) {
+      return value.toDouble();
+    }
+    if (value != null) {
+      final parsed = double.tryParse(value.toString().trim());
+      if (parsed != null && parsed.isFinite) {
+        return parsed;
+      }
+    }
+    return fallback;
   }
 
   static String _pickUpdatedText(List<Object?> candidates, String fallback) {
@@ -305,7 +398,7 @@ class RescueStore extends ChangeNotifier {
       try {
         await ds.updateStatus(dbId: dbId, status: newStatus);
       } catch (e) {
-        debugPrint('ステータス更新エラー: $e');
+        appLog('ステータス更新エラー: $e');
       }
     }
   }
@@ -351,6 +444,10 @@ class RescueStore extends ChangeNotifier {
     }
     unawaited(_realtimeSubscription?.cancel());
     unawaited(_incomingAlertController.close());
+    if (_ownsGeocoder) {
+      _geocoder.dispose();
+    }
+    _remoteUpdatedCoordDbIds.clear();
     super.dispose();
   }
 
@@ -360,8 +457,10 @@ class RescueStore extends ChangeNotifier {
     required String requesterName,
     required String rescueDetails,
     required String considerations,
-    String locationText = '〇〇地区付近',
+    String locationText = kDefaultCitizenLocationNote,
     String distanceText = '約150m先（デモ）',
+    double? latitude,
+    double? longitude,
   }) async {
     final now = DateTime.now();
     final normalizedName =
@@ -370,12 +469,25 @@ class RescueStore extends ChangeNotifier {
         rescueDetails.trim().isEmpty ? '救助が必要です' : rescueDetails.trim();
     final normalizedConsiderations =
         considerations.trim().isEmpty ? 'なし' : considerations.trim();
-    final normalizedLocation =
-        locationText.trim().isEmpty ? '〇〇地区付近' : locationText.trim();
+    final normalizedLocation = locationText.trim().isEmpty
+        ? kDefaultCitizenLocationNote
+        : locationText.trim();
     final normalizedDistance =
         distanceText.trim().isEmpty ? '約150m先（デモ）' : distanceText.trim();
 
+    final hasExplicitCoords = latitude != null &&
+        longitude != null &&
+        latitude.isFinite &&
+        longitude.isFinite &&
+        latitude >= -90.0 &&
+        latitude <= 90.0 &&
+        longitude >= -180.0 &&
+        longitude <= 180.0;
+
     final requestId = _nextCitizenRequestId(now);
+    final resolvedCoords = hasExplicitCoords
+        ? (latitude: latitude, longitude: longitude)
+        : RescueRequest.resolveCoordinatesFromLocation(normalizedLocation);
     final localRequest = RescueRequest(
       id: requestId,
       time: _formatClockTime(now),
@@ -389,6 +501,8 @@ class RescueStore extends ChangeNotifier {
       consideration: normalizedConsiderations,
       latPercent: 50.0,
       topPercent: 50.0,
+      latitude: resolvedCoords.latitude,
+      longitude: resolvedCoords.longitude,
       status: RequestStatus.pending,
     );
 
@@ -398,9 +512,35 @@ class RescueStore extends ChangeNotifier {
     _selectedId = localRequest.id;
     notifyListeners();
 
+    GeoCoordinates? accurateCoords = hasExplicitCoords
+        ? (latitude: latitude, longitude: longitude)
+        : null;
+    if (accurateCoords == null &&
+        AddressGeocoder.normalizeQuery(normalizedLocation).isNotEmpty) {
+      accurateCoords = await _geocoder.geocode(normalizedLocation);
+      if (!_disposed && accurateCoords != null) {
+        final localIdx = _requests.indexWhere((v) => v.id == requestId);
+        if (localIdx != -1) {
+          final target = _requests[localIdx];
+          final targetDbId = target.dbId;
+          if (targetDbId == null ||
+              !_remoteUpdatedCoordDbIds.contains(targetDbId)) {
+            _requests[localIdx] = target.copyWith(
+              latitude: accurateCoords.latitude,
+              longitude: accurateCoords.longitude,
+            );
+            notifyListeners();
+          }
+        }
+      }
+    }
+
+    if (_disposed) return localRequest;
+
     final ds = dataSource;
     if (ds == null) {
-      return localRequest;
+      final idx = _requests.indexWhere((v) => v.id == requestId);
+      return idx != -1 ? _requests[idx] : localRequest;
     }
 
     final payload = buildCitizenRescuePayload(
@@ -413,13 +553,15 @@ class RescueStore extends ChangeNotifier {
       distanceText: normalizedDistance,
       requestType: '救助要請',
       status: RequestStatus.pending.label,
+      latitude: accurateCoords?.latitude,
+      longitude: accurateCoords?.longitude,
     );
 
     Map<String, dynamic>? insertedRow;
     try {
       insertedRow = await ds.insertRequest(payload);
     } catch (e) {
-      debugPrint('MAMO市民救助要請送信エラー: $e');
+      appLog('MAMO市民救助要請送信エラー: $e');
     }
 
     if (_disposed || insertedRow == null) {
@@ -441,8 +583,13 @@ class RescueStore extends ChangeNotifier {
     }
 
     final current = _requests[index];
+    final parsedInsertedCoords = RescueRequest.parseCoordinates(insertedRow);
     if (current.dbId == null) {
-      final reconciled = current.copyWith(dbId: insertedDbId);
+      final reconciled = current.copyWith(
+        dbId: insertedDbId,
+        latitude: parsedInsertedCoords?.latitude,
+        longitude: parsedInsertedCoords?.longitude,
+      );
       _requests[index] = reconciled;
       notifyListeners();
       final remoteStatus = insertedRow['status'] != null
@@ -452,10 +599,24 @@ class RescueStore extends ChangeNotifier {
         try {
           await ds.updateStatus(dbId: insertedDbId, status: reconciled.status);
         } catch (e) {
-          debugPrint('MAMO追送ステータス更新エラー: $e');
+          appLog('MAMO追送ステータス更新エラー: $e');
         }
       }
       return reconciled;
+    }
+    final dbId = current.dbId;
+    if (dbId != null &&
+        !_remoteUpdatedCoordDbIds.contains(dbId) &&
+        parsedInsertedCoords != null &&
+        (current.latitude != parsedInsertedCoords.latitude ||
+            current.longitude != parsedInsertedCoords.longitude)) {
+      final updated = current.copyWith(
+        latitude: parsedInsertedCoords.latitude,
+        longitude: parsedInsertedCoords.longitude,
+      );
+      _requests[index] = updated;
+      notifyListeners();
+      return updated;
     }
     return current;
   }

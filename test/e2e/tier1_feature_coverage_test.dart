@@ -618,7 +618,7 @@ void main() {
       expect(find.textContaining('（任意）'), findsAtLeastNWidgets(1));
       expect(find.text('救助・医療対応時に知っておいてほしいこと'), findsOneWidget);
       await tester.ensureVisible(find.text('登録する'));
-      expect(find.textContaining('外部へ送信しません'), findsOneWidget);
+      expect(find.textContaining('実在の本名'), findsOneWidget);
       expect(find.text('1'), findsOneWidget);
       expect(find.text('2'), findsOneWidget);
       expect(find.text('3'), findsOneWidget);
@@ -700,7 +700,7 @@ void main() {
       expect(find.text('☰'), findsOneWidget);
       expect(find.text('ホーム'), findsAtLeastNWidgets(2));
       expect(find.text('♧'), findsOneWidget);
-      expect(find.textContaining('〇〇地区'), findsAtLeastNWidgets(1));
+      expect(find.textContaining('山口市大殿地区'), findsAtLeastNWidgets(1));
       expect(find.textContaining('震度5強'), findsOneWidget);
     });
 
@@ -783,7 +783,7 @@ void main() {
       await tester.ensureVisible(find.text('避難所情報'));
       expect(find.text('避難所情報'), findsOneWidget);
       expect(find.textContaining('150m先'), findsOneWidget);
-      expect(find.textContaining('〇〇小学校'), findsOneWidget);
+      expect(find.textContaining('大殿小学校'), findsOneWidget);
       expect(find.textContaining('避難所開設'), findsOneWidget);
 
       await scrollAndTap(tester, find.text('☰'));
@@ -820,7 +820,7 @@ void main() {
       expect(find.textContaining('救助要請を行います'), findsOneWidget);
     });
 
-    testWidgets('T1-F09-02: 状況確認フォーム 3 項目と現在地デモボックスが表示される', (tester) async {
+    testWidgets('T1-F09-02: 状況確認フォーム 4 項目と位置情報案内ボックスが表示される', (tester) async {
       await openRescue(tester);
 
       expect(find.text('現在の状況を確認'), findsOneWidget);
@@ -828,8 +828,9 @@ void main() {
       expect(find.text('あなた'), findsAtLeastNWidgets(1));
       expect(find.text('救助内容'), findsOneWidget);
       expect(find.text('救助時の配慮事項'), findsOneWidget);
-      await tester.ensureVisible(find.textContaining('デモ位置情報'));
-      expect(find.textContaining('デモ位置情報（〇〇地区付近）'), findsOneWidget);
+      expect(find.text('現在地・住所'), findsOneWidget);
+      await tester.ensureVisible(find.textContaining('位置情報：'));
+      expect(find.textContaining('位置情報：登録済み住所が自動入力されます'), findsOneWidget);
       expect(find.textContaining('距離：自治体側で受信時に表示'), findsOneWidget);
     });
 
@@ -871,7 +872,7 @@ void main() {
       await openRescue(tester, dataSource: fakeDs);
 
       await enterFieldByHint(tester, '登録した名前', '高橋 一郎');
-      await enterFieldByHint(tester, '建物内に閉じ込め', '2階に閉じ込め');
+      await enterRescueDetail(tester, '2階に閉じ込め');
       await enterFieldByHint(tester, '登録済みの配慮事項', '喘息あり');
       await scrollAndTap(
         tester,
@@ -908,7 +909,7 @@ void main() {
         await enterFieldByHint(tester, '登録した名前', name);
       }
       if (detail != null) {
-        await enterFieldByHint(tester, '建物内に閉じ込め', detail);
+        await enterRescueDetail(tester, detail);
       }
       await scrollAndTap(
         tester,
@@ -919,6 +920,29 @@ void main() {
         await pumpPastToasts(tester);
       }
     }
+
+    testWidgets('T1-F10-05: 救助内容のラジオ選択肢が受付カードに反映され自由記述欄は非表示', (
+      tester,
+    ) async {
+      await pumpMamoApp(
+        tester,
+        viewport: kMobileViewportSize,
+        navigateTo: MamoAppMode.citizen,
+      );
+      await loginAsGuest(tester);
+      await scrollAndTap(tester, find.text('救助要請'));
+      expect(find.byType(RadioListTile<String>), findsNWidgets(5));
+      expect(find.textContaining('建物内に閉じ込め', findRichText: false), findsWidgets);
+      await scrollAndTap(tester, find.text('けが人がいる'));
+      expect(find.widgetWithText(TextField, ''), findsWidgets);
+      await scrollAndTap(
+        tester,
+        find.textContaining('救助要請を送信'),
+        settle: false,
+      );
+      await pumpPastToasts(tester);
+      expect(find.textContaining('けが人がいる'), findsAtLeastNWidgets(1));
+    });
 
     testWidgets('T1-F10-01: 完了アイコン (✓)・見出し・説明文が表示される', (tester) async {
       await sendSosAndReachSent(tester);
@@ -936,7 +960,7 @@ void main() {
 
       expect(find.text('受付内容'), findsOneWidget);
       expect(find.textContaining('MAMO-'), findsOneWidget);
-      expect(find.textContaining('〇〇地区付近'), findsOneWidget);
+      expect(find.textContaining('山口県山口市亀山町付近'), findsOneWidget);
       expect(find.textContaining('あなた'), findsAtLeastNWidgets(1));
       expect(find.textContaining('救助が必要です'), findsAtLeastNWidgets(1));
     });
@@ -1011,7 +1035,7 @@ void main() {
 
       expect(find.text('家族グループ'), findsNothing);
       expect(find.text('避難所情報'), findsNothing);
-      expect(find.textContaining('〇〇小学校'), findsAtLeastNWidgets(1));
+      expect(find.textContaining('大殿小学校'), findsAtLeastNWidgets(1));
       expect(find.textContaining('現在地'), findsAtLeastNWidgets(1));
       expect(find.textContaining('避難所'), findsAtLeastNWidgets(1));
       expect(find.textContaining('危険'), findsAtLeastNWidgets(1));
@@ -1118,7 +1142,7 @@ void main() {
       await loginAsGuest(tester);
       await scrollAndTap(tester, find.text('救助要請'));
       await enterFieldByHint(tester, '登録した名前', name);
-      await enterFieldByHint(tester, '建物内に閉じ込め', detail);
+      await enterRescueDetail(tester, detail);
       if (considerations.isNotEmpty) {
         await enterFieldByHint(tester, '登録済みの配慮事項', considerations);
       }
@@ -1172,7 +1196,7 @@ void main() {
 
       expect(find.text('救急要請'), findsAtLeastNWidgets(1));
       expect(find.text('未対応'), findsAtLeastNWidgets(1));
-      expect(find.text('〇〇地区付近'), findsAtLeastNWidgets(1));
+      expect(find.text('山口県山口市亀山町付近'), findsAtLeastNWidgets(1));
       expect(find.textContaining('約150m先（デモ）'), findsAtLeastNWidgets(1));
       expect(find.textContaining('佐藤 次郎'), findsAtLeastNWidgets(1));
       expect(find.textContaining('MAMO-'), findsAtLeastNWidgets(1));
@@ -1225,7 +1249,7 @@ void main() {
       await pumpPastToasts(tester);
 
       await scrollAndTap(tester, find.text('救助要請'));
-      await enterFieldByHint(tester, '建物内に閉じ込め', '玄関が歪み脱出困難');
+      await enterRescueDetail(tester, '玄関が歪み脱出困難');
       await scrollAndTap(
         tester,
         find.textContaining('救助要請を送信'),
@@ -1293,7 +1317,7 @@ void main() {
         findsAtLeastNWidgets(1),
       );
       expect(
-        find.descendant(of: statusView, matching: find.text('〇〇地区付近')),
+        find.descendant(of: statusView, matching: find.text('山口県山口市亀山町付近')),
         findsOneWidget,
       );
     });

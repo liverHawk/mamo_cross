@@ -4,6 +4,7 @@ import '../../models/citizen_models.dart';
 import '../../state/citizen_store.dart';
 import '../../state/rescue_store.dart';
 import '../../theme/mamo_theme.dart';
+import 'package:flutter/services.dart';
 
 /// 利用者救助要請入力画面（#rescue）
 class CitizenRescueView extends StatefulWidget {
@@ -21,9 +22,19 @@ class CitizenRescueView extends StatefulWidget {
 }
 
 class _CitizenRescueViewState extends State<CitizenRescueView> {
+  static const _detailOptions = [
+    '建物内に閉じ込められている',
+    'けが人がいる',
+    '動けない・避難できない',
+    '浸水・土砂で孤立している',
+  ];
+  static const _otherOption = 'その他（自由記述）';
+  bool _otherSelected = false;
+
   late final TextEditingController _nameController;
   late final TextEditingController _detailController;
   late final TextEditingController _careController;
+  late final TextEditingController _locationController;
 
   @override
   void initState() {
@@ -34,6 +45,10 @@ class _CitizenRescueViewState extends State<CitizenRescueView> {
         TextEditingController(text: widget.citizenStore.rescueDetailDraft);
     _careController =
         TextEditingController(text: widget.citizenStore.rescueCareDraft);
+    _locationController =
+        TextEditingController(text: widget.citizenStore.rescueLocationDraft);
+    _otherSelected = widget.citizenStore.rescueDetailDraft.isNotEmpty &&
+        !_detailOptions.contains(widget.citizenStore.rescueDetailDraft);
     widget.citizenStore.addListener(_syncFromStore);
   }
 
@@ -53,10 +68,15 @@ class _CitizenRescueViewState extends State<CitizenRescueView> {
     _nameController.dispose();
     _detailController.dispose();
     _careController.dispose();
+    _locationController.dispose();
     super.dispose();
   }
 
   void _syncFromStore() {
+    if (_detailOptions.contains(widget.citizenStore.rescueDetailDraft) &&
+        _otherSelected) {
+      _otherSelected = false;
+    }
     if (_nameController.text != widget.citizenStore.rescueNameDraft) {
       _nameController.text = widget.citizenStore.rescueNameDraft;
     }
@@ -65,6 +85,9 @@ class _CitizenRescueViewState extends State<CitizenRescueView> {
     }
     if (_careController.text != widget.citizenStore.rescueCareDraft) {
       _careController.text = widget.citizenStore.rescueCareDraft;
+    }
+    if (_locationController.text != widget.citizenStore.rescueLocationDraft) {
+      _locationController.text = widget.citizenStore.rescueLocationDraft;
     }
   }
 
@@ -167,6 +190,7 @@ class _CitizenRescueViewState extends State<CitizenRescueView> {
                         const SizedBox(height: 14),
                         const _FieldLabel('お名前'),
                         TextField(
+                          inputFormatters: [LengthLimitingTextInputFormatter(100)],
                           controller: _nameController,
                           onChanged: (v) =>
                               widget.citizenStore.updateRescueDraft(name: v),
@@ -174,25 +198,80 @@ class _CitizenRescueViewState extends State<CitizenRescueView> {
                         ),
                         const SizedBox(height: 14),
                         const _FieldLabel('救助内容'),
-                        TextField(
-                          controller: _detailController,
-                          minLines: 3,
-                          maxLines: 5,
-                          onChanged: (v) =>
-                              widget.citizenStore.updateRescueDraft(detail: v),
-                          decoration: _inputDecoration(
-                            '例）建物内に閉じ込められています／けが人がいます',
+                        RadioGroup<String>(
+                          groupValue: _otherSelected
+                              ? _otherOption
+                              : (_detailOptions.contains(
+                                      widget.citizenStore.rescueDetailDraft)
+                                  ? widget.citizenStore.rescueDetailDraft
+                                  : null),
+                          onChanged: (v) {
+                            if (v == null) return;
+                            if (v == _otherOption) {
+                              setState(() => _otherSelected = true);
+                              widget.citizenStore.updateRescueDraft(detail: '');
+                            } else {
+                              setState(() => _otherSelected = false);
+                              widget.citizenStore.updateRescueDraft(detail: v);
+                            }
+                          },
+                          child: Material(
+                            type: MaterialType.transparency,
+                            child: Column(
+                              children: [
+                                for (final option in [
+                                  ..._detailOptions,
+                                  _otherOption,
+                                ])
+                                  RadioListTile<String>(
+                                    value: option,
+                                    title: Text(
+                                      option,
+                                      style: const TextStyle(fontSize: 14),
+                                    ),
+                                    dense: true,
+                                    contentPadding: EdgeInsets.zero,
+                                    activeColor: MamoColors.citizenBlue,
+                                  ),
+                              ],
+                            ),
                           ),
                         ),
+                        if (_otherSelected) ...[
+                          const SizedBox(height: 8),
+                          TextField(
+                            inputFormatters: [LengthLimitingTextInputFormatter(500)],
+                            controller: _detailController,
+                            minLines: 3,
+                            maxLines: 5,
+                            onChanged: (v) =>
+                                widget.citizenStore.updateRescueDraft(detail: v),
+                            decoration: _inputDecoration(
+                              '例）建物内に閉じ込められています／けが人がいます',
+                            ),
+                          ),
+                        ],
                         const SizedBox(height: 14),
                         const _FieldLabel('救助時の配慮事項'),
                         TextField(
+                          inputFormatters: [LengthLimitingTextInputFormatter(500)],
                           controller: _careController,
                           minLines: 3,
                           maxLines: 5,
                           onChanged: (v) =>
                               widget.citizenStore.updateRescueDraft(care: v),
                           decoration: _inputDecoration('登録済みの配慮事項など'),
+                        ),
+                        const SizedBox(height: 14),
+                        const _FieldLabel('現在地・住所'),
+                        TextField(
+                          inputFormatters: [LengthLimitingTextInputFormatter(200)],
+                          controller: _locationController,
+                          onChanged: (v) =>
+                              widget.citizenStore.updateRescueDraft(location: v),
+                          decoration: _inputDecoration(
+                            '例）山口県山口市亀山町2-1（未入力時は山口市亀山町付近）',
+                          ),
                         ),
                         const SizedBox(height: 14),
                         Container(
@@ -202,7 +281,7 @@ class _CitizenRescueViewState extends State<CitizenRescueView> {
                             borderRadius: BorderRadius.circular(12),
                           ),
                           child: const Text(
-                            '📍 現在地：デモ位置情報（〇〇地区付近）\n距離：自治体側で受信時に表示',
+                            '📍 位置情報：登録済み住所が自動入力されます（必要に応じて変更可）\n距離：自治体側で受信時に表示',
                             style: TextStyle(
                               fontSize: 12,
                               color: Color(0xFF475569),

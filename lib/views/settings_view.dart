@@ -2,6 +2,7 @@ import 'package:material_ui/material_ui.dart';
 
 import '../state/rescue_store.dart';
 import '../theme/mamo_theme.dart';
+import 'package:flutter/services.dart';
 
 /// 設定画面（自治体名・リアルタイム通知設定）
 class SettingsView extends StatefulWidget {
@@ -157,6 +158,7 @@ class _SettingsViewState extends State<SettingsView> {
                     ),
                     const SizedBox(height: 7),
                     TextField(
+                      inputFormatters: [LengthLimitingTextInputFormatter(50)],
                       controller: _municipalityController,
                       style: const TextStyle(
                         fontSize: 14,

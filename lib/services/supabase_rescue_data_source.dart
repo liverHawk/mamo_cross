@@ -1,16 +1,16 @@
 import 'dart:async';
 
-import 'package:flutter/foundation.dart';
-import 'package:supabase/supabase.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../config/supabase_config.dart';
 import '../models/rescue_request.dart';
 import 'rescue_data_source.dart';
+import '../utils/app_logger.dart';
 
 /// Supabase (`public.rescue_requests`) に対する本番データソース実装
 class SupabaseRescueDataSource implements RescueDataSource {
   SupabaseRescueDataSource({
-    this.config = SupabaseConfig.exhibition,
+    this.config = SupabaseConfig.fromEnvironment,
     SupabaseClient? client,
   }) : _injectedClient = client;
 
@@ -21,6 +21,7 @@ class SupabaseRescueDataSource implements RescueDataSource {
   final SupabaseClient? _injectedClient;
 
   SupabaseClient? _ownedClient;
+  SupabaseClient? _activeClient;
   RealtimeChannel? _channel;
   StreamController<RescueRealtimeEvent>? _realtimeController;
   final Completer<void> _disposeCompleter = Completer<void>();
@@ -28,12 +29,24 @@ class SupabaseRescueDataSource implements RescueDataSource {
 
   SupabaseClient? _resolveClient() {
     if (_disposed) return null;
-    if (_injectedClient != null) return _injectedClient;
+    if (_injectedClient != null) {
+      _activeClient = _injectedClient;
+      return _injectedClient;
+    }
     if (!config.isConfigured) {
-      debugPrint('Supabase設定がありません');
+      appLog('Supabase設定がありません');
       return null;
     }
-    return _ownedClient ??= SupabaseClient(
+    try {
+      if (config.url == SupabaseConfig.fromEnvironment.url &&
+          config.publishableKey ==
+              SupabaseConfig.fromEnvironment.publishableKey &&
+          Supabase.instance.isInitialized) {
+        _activeClient = Supabase.instance.client;
+        return _activeClient;
+      }
+    } catch (_) {}
+    _ownedClient ??= SupabaseClient(
       config.url,
       config.publishableKey,
       authOptions: const AuthClientOptions(autoRefreshToken: false),
@@ -42,6 +55,8 @@ class SupabaseRescueDataSource implements RescueDataSource {
         connectionCloseTimeout: Duration.zero,
       ),
     );
+    _activeClient = _ownedClient;
+    return _ownedClient;
   }
 
   @override
@@ -125,7 +140,7 @@ class SupabaseRescueDataSource implements RescueDataSource {
           .subscribe((status, error) {
             final connected = status == RealtimeSubscribeStatus.subscribed;
             if (error != null) {
-              debugPrint('MAMO realtime error ($status): $error');
+              appLog('MAMO realtime error ($status): $error');
             }
             if (!_disposed) {
               onConnectionChanged?.call(connected);
@@ -140,7 +155,7 @@ class SupabaseRescueDataSource implements RescueDataSource {
         }
       };
     } catch (e) {
-      debugPrint('MAMO realtime subscribe failed: $e');
+      appLog('MAMO realtime subscribe failed: $e');
       if (identical(_channel, channel)) {
         _channel = null;
       }
@@ -182,16 +197,21 @@ class SupabaseRescueDataSource implements RescueDataSource {
       final client = _resolveClient();
       if (client == null) return null;
 
+      // RLS: 本人の要請のみ参照可能にするため、認証済みなら user_id を付与
+      final uid = client.auth.currentUser?.id;
+      final data = <String, dynamic>{...payload};
+      if (uid != null && data['user_id'] == null) data['user_id'] = uid;
+
       final row = await client
           .from(_tableName)
-          .insert(payload)
+          .insert(data)
           .select()
           .maybeSingle()
           .abortSignal(_disposeCompleter.future);
       if (row == null) return null;
       return Map<String, dynamic>.from(row);
     } catch (e) {
-      debugPrint('MAMO救助要請送信エラー: $e');
+      appLog('MAMO救助要請送信エラー: $e');
       return null;
     }
   }
@@ -210,14 +230,14 @@ class SupabaseRescueDataSource implements RescueDataSource {
   ) async {
     if (channel != null) {
       try {
-        final client = _injectedClient ?? _ownedClient;
+        final client = _injectedClient ?? _ownedClient ?? _activeClient;
         if (client != null) {
           await client.removeChannel(channel);
         } else {
           await channel.unsubscribe();
         }
       } catch (e) {
-        debugPrint('MAMO realtime channel cleanup error: $e');
+        appLog('MAMO realtime channel cleanup error: $e');
       }
     }
 
@@ -244,6 +264,8 @@ class SupabaseRescueDataSource implements RescueDataSource {
 
     final owned = _ownedClient;
     _ownedClient = null;
+    final activeClient = _activeClient;
+    _activeClient = null;
     if (owned != null) {
       final realtime = owned.realtime;
       final conn = realtime.conn;
@@ -259,9 +281,10 @@ class SupabaseRescueDataSource implements RescueDataSource {
 
     if (channel != null) {
       try {
-        final injected = _injectedClient;
-        if (injected != null) {
-          await injected.removeChannel(channel);
+        final clientToRemoveFrom =
+            _injectedClient ?? (owned == null ? activeClient : null);
+        if (clientToRemoveFrom != null) {
+          await clientToRemoveFrom.removeChannel(channel);
         } else {
           final unsubFuture = channel.unsubscribe(Duration.zero);
           if (owned != null) {
@@ -270,7 +293,7 @@ class SupabaseRescueDataSource implements RescueDataSource {
           await unsubFuture;
         }
       } catch (e) {
-        debugPrint('MAMO realtime channel cleanup error: $e');
+        appLog('MAMO realtime channel cleanup error: $e');
       }
     }
 
@@ -278,7 +301,7 @@ class SupabaseRescueDataSource implements RescueDataSource {
       try {
         await owned.dispose();
       } catch (e) {
-        debugPrint('SupabaseClient dispose error: $e');
+        appLog('SupabaseClient dispose error: $e');
       }
     }
   }

@@ -68,7 +68,7 @@ void main() {
 
         // 6. #rescue 入力・送信
         expect(find.text('山口 花子'), findsAtLeastNWidgets(1));
-        await enterFieldByHint(tester, '建物内に閉じ込め', '自宅1階で家具に挟まれ動けません');
+        await enterRescueDetail(tester, '自宅1階で家具に挟まれ動けません');
         await scrollAndTap(
           tester,
           find.textContaining('救助要請を送信'),
@@ -80,12 +80,13 @@ void main() {
         expect(find.text('✓'), findsOneWidget);
         expect(find.textContaining('MAMO-'), findsOneWidget);
         expect(find.textContaining('山口 花子'), findsAtLeastNWidgets(1));
-        expect(find.textContaining('〇〇地区付近'), findsOneWidget);
+        expect(find.textContaining('山口県山口市滝町1-1'), findsOneWidget);
         expect(fakeDs.insertedPayloads, hasLength(1));
         expectValid15ColPayload(
           fakeDs.insertedPayloads.single,
           expectedName: '山口 花子',
           expectedDetail: '自宅1階で家具に挟まれ動けません',
+          expectedLocation: '山口県山口市滝町1-1',
           expectedConsiderationSubstrings: const [
             'ホルモン治療中',
             '医療的ケアが必要',
@@ -158,7 +159,7 @@ void main() {
         expect(find.text('お父さん'), findsOneWidget);
         expect(find.text('お姉ちゃん'), findsOneWidget);
         expect(find.text('あなた'), findsOneWidget);
-        expect(find.textContaining('〇〇小学校'), findsAtLeastNWidgets(1));
+        expect(find.textContaining('大殿小学校'), findsAtLeastNWidgets(1));
 
         // 4. 安否タブ操作
         await tapCitizenBottomTab(tester, '安否');
@@ -172,18 +173,18 @@ void main() {
         // 5. マップタブで避難所確認
         await tapCitizenBottomTab(tester, 'マップ');
         expect(find.text('家族グループ'), findsNothing);
-        expect(find.textContaining('〇〇小学校'), findsAtLeastNWidgets(1));
+        expect(find.textContaining('大殿小学校'), findsAtLeastNWidgets(1));
 
         // 6. メッセージタブで連絡送信
         await tapCitizenBottomTab(tester, 'メッセージ');
         final msgField = find.byType(TextField);
         expect(msgField, findsAtLeastNWidgets(1));
-        await scrollAndEnterText(tester, msgField.first, '〇〇小学校へ避難します');
+        await scrollAndEnterText(tester, msgField.first, '大殿小学校へ避難します');
         final sendTrigger = findSendMessageTrigger();
         expect(sendTrigger, findsAtLeastNWidgets(1));
         await scrollAndTap(tester, sendTrigger.first, settle: false);
         await pumpPastToasts(tester);
-        expect(find.textContaining('〇〇小学校へ避難します'), findsAtLeastNWidgets(1));
+        expect(find.textContaining('大殿小学校へ避難します'), findsAtLeastNWidgets(1));
 
         // 7. ホームへ戻り同期確認後、自治体側へ切替して Drawer 操作確認
         await tapCitizenBottomTab(tester, 'ホーム');
@@ -218,7 +219,7 @@ void main() {
         await expectToastAndDrain(tester, 'デモ送信（Supabase未接続）');
 
         expect(find.textContaining('あなた'), findsAtLeastNWidgets(1));
-        expect(find.textContaining('〇〇地区付近'), findsOneWidget);
+        expect(find.textContaining('山口県山口市亀山町付近'), findsOneWidget);
         expect(find.textContaining('救助が必要です'), findsAtLeastNWidgets(1));
         await scrollAndTap(tester, find.text('ホームへ戻る'));
 
@@ -302,7 +303,7 @@ void main() {
         await tapCitizenBottomTab(tester, 'ホーム');
         await scrollAndTap(tester, find.text('救助要請'));
         await enterFieldByHint(tester, '登録した名前', '展示 来場者A');
-        await enterFieldByHint(tester, '建物内に閉じ込め', '避難支援希望');
+        await enterRescueDetail(tester, '避難支援希望');
         await scrollAndTap(
           tester,
           find.textContaining('救助要請を送信'),
@@ -357,7 +358,7 @@ void main() {
         await pumpPastToasts(tester);
 
         await scrollAndTap(tester, find.text('救助要請'));
-        await enterFieldByHint(tester, '建物内に閉じ込め', '電源喪失の恐れ');
+        await enterRescueDetail(tester, '電源喪失の恐れ');
         await scrollAndTap(
           tester,
           find.textContaining('救助要請を送信'),
@@ -384,7 +385,7 @@ void main() {
         await pumpPastToasts(tester);
 
         await scrollAndTap(tester, find.text('救助要請'));
-        await enterFieldByHint(tester, '建物内に閉じ込め', '破水の兆候あり、搬送希望');
+        await enterRescueDetail(tester, '破水の兆候あり、搬送希望');
         await scrollAndTap(
           tester,
           find.textContaining('救助要請を送信'),
@@ -470,7 +471,7 @@ void main() {
         await tapCitizenBottomTab(tester, 'ホーム');
         await scrollAndTap(tester, find.text('救助要請'));
         await enterFieldByHint(tester, '登録した名前', '新規 市民B');
-        await enterFieldByHint(tester, '建物内に閉じ込め', '落下物で負傷');
+        await enterRescueDetail(tester, '落下物で負傷');
         await scrollAndTap(
           tester,
           find.textContaining('救助要請を送信'),

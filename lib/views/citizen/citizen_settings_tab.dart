@@ -1,9 +1,12 @@
+import 'dart:async';
+
 import 'package:material_ui/material_ui.dart';
 
 import '../../models/app_mode.dart';
 import '../../models/citizen_models.dart';
 import '../../state/citizen_store.dart';
 import '../../theme/mamo_theme.dart';
+import 'package:flutter/services.dart';
 
 /// 利用者設定タブ（登録プロフィール確認/編集・配慮事項・通知スイッチ・モード切替・ログアウト）
 class CitizenSettingsTab extends StatefulWidget {
@@ -22,6 +25,8 @@ class CitizenSettingsTab extends StatefulWidget {
 
 class _CitizenSettingsTabState extends State<CitizenSettingsTab> {
   bool _isEditing = false;
+  String _initialName = '';
+  String _initialAddress = '';
   late final TextEditingController _nameController;
   late final TextEditingController _addressController;
 
@@ -31,28 +36,71 @@ class _CitizenSettingsTabState extends State<CitizenSettingsTab> {
     _nameController = TextEditingController(text: widget.store.profile.name);
     _addressController =
         TextEditingController(text: widget.store.profile.addressDetail);
+    widget.store.addListener(_syncFromStore);
+  }
+
+  @override
+  void didUpdateWidget(covariant CitizenSettingsTab oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.store != widget.store) {
+      oldWidget.store.removeListener(_syncFromStore);
+      widget.store.addListener(_syncFromStore);
+      _syncFromStore();
+    }
   }
 
   @override
   void dispose() {
+    widget.store.removeListener(_syncFromStore);
     _nameController.dispose();
     _addressController.dispose();
     super.dispose();
   }
 
+  void _syncFromStore() {
+    if (!mounted || !_isEditing) return;
+    final profile = widget.store.profile;
+    if (_nameController.text == _initialName &&
+        _nameController.text != profile.name) {
+      _nameController.value = TextEditingValue(
+        text: profile.name,
+        selection: TextSelection.collapsed(offset: profile.name.length),
+      );
+    }
+    _initialName = profile.name;
+    if (_addressController.text == _initialAddress &&
+        _addressController.text != profile.addressDetail) {
+      _addressController.value = TextEditingValue(
+        text: profile.addressDetail,
+        selection: TextSelection.collapsed(
+          offset: profile.addressDetail.length,
+        ),
+      );
+    }
+    _initialAddress = profile.addressDetail;
+  }
+
   void _startEdit() {
-    _nameController.text = widget.store.profile.name;
-    _addressController.text = widget.store.profile.addressDetail;
+    _initialName = widget.store.profile.name;
+    _initialAddress = widget.store.profile.addressDetail;
+    _nameController.text = _initialName;
+    _addressController.text = _initialAddress;
     setState(() => _isEditing = true);
   }
 
   void _saveEdit() {
-    widget.store.updateBasicInfo(
-      name: _nameController.text.trim(),
-      addressDetail: _addressController.text.trim(),
-    );
-    widget.store.showToast('登録情報を保存しました');
+    final nextName =
+        _nameController.text == _initialName ? null : _nameController.text.trim();
+    final nextAddress = _addressController.text == _initialAddress
+        ? null
+        : _addressController.text.trim();
     setState(() => _isEditing = false);
+    unawaited(
+      widget.store.saveProfileEdits(
+        name: nextName,
+        addressDetail: nextAddress,
+      ),
+    );
   }
 
   @override
@@ -145,6 +193,7 @@ class _CitizenSettingsTabState extends State<CitizenSettingsTab> {
                             const SizedBox(height: 8),
                             if (_isEditing) ...[
                               TextField(
+                                inputFormatters: [LengthLimitingTextInputFormatter(100)],
                                 controller: _nameController,
                                 decoration: const InputDecoration(
                                   labelText: 'お名前',
@@ -155,6 +204,7 @@ class _CitizenSettingsTabState extends State<CitizenSettingsTab> {
                               ),
                               const SizedBox(height: 10),
                               TextField(
+                                inputFormatters: [LengthLimitingTextInputFormatter(300)],
                                 controller: _addressController,
                                 decoration: const InputDecoration(
                                   labelText: '市区町村・番地・建物名',

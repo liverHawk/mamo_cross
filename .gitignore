@@ -46,3 +46,25 @@ app.*.map.json
 
 # Widget Preview related
 .widget_preview/
+
+# Build archives & packages (may embed certificates / personal info)
+*.ipa
+*.apk
+*.aab
+*.zip
+*.tar.gz
+*.dSYM.zip
+*.dSYM/
+
+# Environment & secrets
+.env
+.env.*
+!.env.example
+ExportOptions.plist
+key.properties
+*.keystore
+*.jks
+
+# Supabase CLI local state
+supabase/.temp/
+supabase/.branches/

@@ -713,7 +713,7 @@ Future<void> closeRequestDetailSheetIfOpen(WidgetTester tester) async {
   }
 }
 
-/// `FakeMapView` のマップピンを Tooltip 文言で検索する
+/// `GsiMapView` のマップピンを Tooltip 文言で検索する
 Finder findMapPinTooltip(String requesterName, {String? statusLabel}) {
   return find.byWidgetPredicate((widget) {
     if (widget is! Tooltip) return false;
@@ -731,7 +731,7 @@ void expectValid15ColPayload(
   required String expectedDetail,
   String? expectedConsiderations,
   List<String>? expectedConsiderationSubstrings,
-  String expectedLocation = '〇〇地区付近',
+  String expectedLocation = '山口県山口市亀山町付近',
   String expectedDistance = '約150m先（デモ）',
 }) {
   assert(
@@ -788,4 +788,10 @@ void expectValid15ColPayload(
   expect(payload['distance_text'], expectedDistance);
   expect(payload['distance'], expectedDistance);
   expect(payload['status'], '未対応');
+}
+
+/// 救助内容: ラジオ「その他（自由記述）」を選択して自由記述を入力する
+Future<void> enterRescueDetail(WidgetTester tester, String text) async {
+  await scrollAndTap(tester, find.text('その他（自由記述）'));
+  await enterFieldByHint(tester, '建物内に閉じ込め', text);
 }
