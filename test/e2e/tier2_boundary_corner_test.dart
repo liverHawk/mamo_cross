@@ -889,7 +889,7 @@ void main() {
       final fakeDs = await openRescueWithFakeDs(tester);
 
       await enterFieldByHint(tester, '登録した名前', '');
-      await enterFieldByHint(tester, '建物内に閉じ込め', '');
+      await enterRescueDetail(tester, '');
       await enterFieldByHint(tester, '登録済みの配慮事項', '');
       await scrollAndTap(
         tester,
@@ -913,7 +913,7 @@ void main() {
       final fakeDs = await openRescueWithFakeDs(tester);
 
       await enterFieldByHint(tester, '登録した名前', '   ');
-      await enterFieldByHint(tester, '建物内に閉じ込め', '   ');
+      await enterRescueDetail(tester, '   ');
       await enterFieldByHint(tester, '登録済みの配慮事項', '   ');
       await scrollAndTap(
         tester,
@@ -936,7 +936,7 @@ void main() {
     ) async {
       await openRescueWithFakeDs(tester);
 
-      await enterFieldByHint(tester, '建物内に閉じ込め', '前回内容');
+      await enterRescueDetail(tester, '前回内容');
       await scrollAndTap(
         tester,
         find.textContaining('救助要請を送信'),
@@ -955,7 +955,7 @@ void main() {
     ) async {
       final fakeDs = await openRescueWithFakeDs(tester);
 
-      await enterFieldByHint(tester, '建物内に閉じ込め', '下書きテキスト');
+      await enterRescueDetail(tester, '下書きテキスト');
       await scrollAndTap(tester, find.text('キャンセル'));
       expect(fakeDs.insertedPayloads, isEmpty);
 
@@ -967,7 +967,7 @@ void main() {
     testWidgets('T2-F09-05: 300 文字以上の長文入力時も送信ボタンまでスクロール到達できる', (tester) async {
       await openRescueWithFakeDs(tester);
 
-      await enterFieldByHint(tester, '建物内に閉じ込め', '救' * 320);
+      await enterRescueDetail(tester, '救' * 320);
       await enterFieldByHint(tester, '登録済みの配慮事項', '配' * 200);
       await scrollAndTap(
         tester,
@@ -1021,7 +1021,7 @@ void main() {
       await loginAsGuest(tester);
       await scrollAndTap(tester, find.text('救助要請'));
       await enterFieldByHint(tester, '登録した名前', name);
-      await enterFieldByHint(tester, '建物内に閉じ込め', detail);
+      await enterRescueDetail(tester, detail);
       await scrollAndTap(
         tester,
         find.textContaining('救助要請を送信'),
@@ -1046,7 +1046,7 @@ void main() {
       await tester.pump(const Duration(milliseconds: 20));
       await scrollAndTap(tester, find.text('救助要請'));
       await enterFieldByHint(tester, '登録した名前', '送信者B');
-      await enterFieldByHint(tester, '建物内に閉じ込め', '件目B');
+      await enterRescueDetail(tester, '件目B');
       await scrollAndTap(
         tester,
         find.textContaining('救助要請を送信'),
@@ -1277,7 +1277,7 @@ void main() {
     }) async {
       await scrollAndTap(tester, find.text('救助要請'));
       await enterFieldByHint(tester, '登録した名前', name);
-      await enterFieldByHint(tester, '建物内に閉じ込め', detail);
+      await enterRescueDetail(tester, detail);
       await scrollAndTap(
         tester,
         find.textContaining('救助要請を送信'),
@@ -1386,7 +1386,7 @@ void main() {
       await loginAsGuest(tester);
       await scrollAndTap(tester, find.text('救助要請'));
       await enterFieldByHint(tester, '登録した名前', 'レース条件ユーザー');
-      await enterFieldByHint(tester, '建物内に閉じ込め', '先行イベント');
+      await enterRescueDetail(tester, '先行イベント');
       await scrollAndTap(
         tester,
         find.textContaining('救助要請を送信'),

@@ -872,7 +872,7 @@ void main() {
       await openRescue(tester, dataSource: fakeDs);
 
       await enterFieldByHint(tester, '登録した名前', '高橋 一郎');
-      await enterFieldByHint(tester, '建物内に閉じ込め', '2階に閉じ込め');
+      await enterRescueDetail(tester, '2階に閉じ込め');
       await enterFieldByHint(tester, '登録済みの配慮事項', '喘息あり');
       await scrollAndTap(
         tester,
@@ -909,7 +909,7 @@ void main() {
         await enterFieldByHint(tester, '登録した名前', name);
       }
       if (detail != null) {
-        await enterFieldByHint(tester, '建物内に閉じ込め', detail);
+        await enterRescueDetail(tester, detail);
       }
       await scrollAndTap(
         tester,
@@ -920,6 +920,29 @@ void main() {
         await pumpPastToasts(tester);
       }
     }
+
+    testWidgets('T1-F10-05: 救助内容のラジオ選択肢が受付カードに反映され自由記述欄は非表示', (
+      tester,
+    ) async {
+      await pumpMamoApp(
+        tester,
+        viewport: kMobileViewportSize,
+        navigateTo: MamoAppMode.citizen,
+      );
+      await loginAsGuest(tester);
+      await scrollAndTap(tester, find.text('救助要請'));
+      expect(find.byType(RadioListTile<String>), findsNWidgets(5));
+      expect(find.textContaining('建物内に閉じ込め', findRichText: false), findsWidgets);
+      await scrollAndTap(tester, find.text('けが人がいる'));
+      expect(find.widgetWithText(TextField, ''), findsWidgets);
+      await scrollAndTap(
+        tester,
+        find.textContaining('救助要請を送信'),
+        settle: false,
+      );
+      await pumpPastToasts(tester);
+      expect(find.textContaining('けが人がいる'), findsAtLeastNWidgets(1));
+    });
 
     testWidgets('T1-F10-01: 完了アイコン (✓)・見出し・説明文が表示される', (tester) async {
       await sendSosAndReachSent(tester);
@@ -1119,7 +1142,7 @@ void main() {
       await loginAsGuest(tester);
       await scrollAndTap(tester, find.text('救助要請'));
       await enterFieldByHint(tester, '登録した名前', name);
-      await enterFieldByHint(tester, '建物内に閉じ込め', detail);
+      await enterRescueDetail(tester, detail);
       if (considerations.isNotEmpty) {
         await enterFieldByHint(tester, '登録済みの配慮事項', considerations);
       }
@@ -1226,7 +1249,7 @@ void main() {
       await pumpPastToasts(tester);
 
       await scrollAndTap(tester, find.text('救助要請'));
-      await enterFieldByHint(tester, '建物内に閉じ込め', '玄関が歪み脱出困難');
+      await enterRescueDetail(tester, '玄関が歪み脱出困難');
       await scrollAndTap(
         tester,
         find.textContaining('救助要請を送信'),

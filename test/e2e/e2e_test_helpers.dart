@@ -789,3 +789,9 @@ void expectValid15ColPayload(
   expect(payload['distance'], expectedDistance);
   expect(payload['status'], '未対応');
 }
+
+/// 救助内容: ラジオ「その他（自由記述）」を選択して自由記述を入力する
+Future<void> enterRescueDetail(WidgetTester tester, String text) async {
+  await scrollAndTap(tester, find.text('その他（自由記述）'));
+  await enterFieldByHint(tester, '建物内に閉じ込め', text);
+}

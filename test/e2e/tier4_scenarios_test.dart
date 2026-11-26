@@ -68,7 +68,7 @@ void main() {
 
         // 6. #rescue 入力・送信
         expect(find.text('山口 花子'), findsAtLeastNWidgets(1));
-        await enterFieldByHint(tester, '建物内に閉じ込め', '自宅1階で家具に挟まれ動けません');
+        await enterRescueDetail(tester, '自宅1階で家具に挟まれ動けません');
         await scrollAndTap(
           tester,
           find.textContaining('救助要請を送信'),
@@ -303,7 +303,7 @@ void main() {
         await tapCitizenBottomTab(tester, 'ホーム');
         await scrollAndTap(tester, find.text('救助要請'));
         await enterFieldByHint(tester, '登録した名前', '展示 来場者A');
-        await enterFieldByHint(tester, '建物内に閉じ込め', '避難支援希望');
+        await enterRescueDetail(tester, '避難支援希望');
         await scrollAndTap(
           tester,
           find.textContaining('救助要請を送信'),
@@ -358,7 +358,7 @@ void main() {
         await pumpPastToasts(tester);
 
         await scrollAndTap(tester, find.text('救助要請'));
-        await enterFieldByHint(tester, '建物内に閉じ込め', '電源喪失の恐れ');
+        await enterRescueDetail(tester, '電源喪失の恐れ');
         await scrollAndTap(
           tester,
           find.textContaining('救助要請を送信'),
@@ -385,7 +385,7 @@ void main() {
         await pumpPastToasts(tester);
 
         await scrollAndTap(tester, find.text('救助要請'));
-        await enterFieldByHint(tester, '建物内に閉じ込め', '破水の兆候あり、搬送希望');
+        await enterRescueDetail(tester, '破水の兆候あり、搬送希望');
         await scrollAndTap(
           tester,
           find.textContaining('救助要請を送信'),
@@ -471,7 +471,7 @@ void main() {
         await tapCitizenBottomTab(tester, 'ホーム');
         await scrollAndTap(tester, find.text('救助要請'));
         await enterFieldByHint(tester, '登録した名前', '新規 市民B');
-        await enterFieldByHint(tester, '建物内に閉じ込め', '落下物で負傷');
+        await enterRescueDetail(tester, '落下物で負傷');
         await scrollAndTap(
           tester,
           find.textContaining('救助要請を送信'),
