@@ -700,7 +700,7 @@ void main() {
       expect(find.text('☰'), findsOneWidget);
       expect(find.text('ホーム'), findsAtLeastNWidgets(2));
       expect(find.text('♧'), findsOneWidget);
-      expect(find.textContaining('〇〇地区'), findsAtLeastNWidgets(1));
+      expect(find.textContaining('山口市大殿地区'), findsAtLeastNWidgets(1));
       expect(find.textContaining('震度5強'), findsOneWidget);
     });
 
@@ -783,7 +783,7 @@ void main() {
       await tester.ensureVisible(find.text('避難所情報'));
       expect(find.text('避難所情報'), findsOneWidget);
       expect(find.textContaining('150m先'), findsOneWidget);
-      expect(find.textContaining('〇〇小学校'), findsOneWidget);
+      expect(find.textContaining('大殿小学校'), findsOneWidget);
       expect(find.textContaining('避難所開設'), findsOneWidget);
 
       await scrollAndTap(tester, find.text('☰'));
@@ -937,7 +937,7 @@ void main() {
 
       expect(find.text('受付内容'), findsOneWidget);
       expect(find.textContaining('MAMO-'), findsOneWidget);
-      expect(find.textContaining('〇〇地区付近'), findsOneWidget);
+      expect(find.textContaining('山口県山口市亀山町付近'), findsOneWidget);
       expect(find.textContaining('あなた'), findsAtLeastNWidgets(1));
       expect(find.textContaining('救助が必要です'), findsAtLeastNWidgets(1));
     });
@@ -1012,7 +1012,7 @@ void main() {
 
       expect(find.text('家族グループ'), findsNothing);
       expect(find.text('避難所情報'), findsNothing);
-      expect(find.textContaining('〇〇小学校'), findsAtLeastNWidgets(1));
+      expect(find.textContaining('大殿小学校'), findsAtLeastNWidgets(1));
       expect(find.textContaining('現在地'), findsAtLeastNWidgets(1));
       expect(find.textContaining('避難所'), findsAtLeastNWidgets(1));
       expect(find.textContaining('危険'), findsAtLeastNWidgets(1));
@@ -1173,7 +1173,7 @@ void main() {
 
       expect(find.text('救急要請'), findsAtLeastNWidgets(1));
       expect(find.text('未対応'), findsAtLeastNWidgets(1));
-      expect(find.text('〇〇地区付近'), findsAtLeastNWidgets(1));
+      expect(find.text('山口県山口市亀山町付近'), findsAtLeastNWidgets(1));
       expect(find.textContaining('約150m先（デモ）'), findsAtLeastNWidgets(1));
       expect(find.textContaining('佐藤 次郎'), findsAtLeastNWidgets(1));
       expect(find.textContaining('MAMO-'), findsAtLeastNWidgets(1));
@@ -1294,7 +1294,7 @@ void main() {
         findsAtLeastNWidgets(1),
       );
       expect(
-        find.descendant(of: statusView, matching: find.text('〇〇地区付近')),
+        find.descendant(of: statusView, matching: find.text('山口県山口市亀山町付近')),
         findsOneWidget,
       );
     });

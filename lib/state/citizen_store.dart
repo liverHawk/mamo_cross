@@ -1124,7 +1124,7 @@ class CitizenStore extends ChangeNotifier {
     if (draft.isNotEmpty) return draft;
     final profileAddr = _profile.addressLine.trim();
     if (profileAddr.isNotEmpty) return profileAddr;
-    return '〇〇地区付近';
+    return kDefaultCitizenLocationNote;
   }
 
   /// 二重送信防止: 同一内容の送信処理中の再呼び出し（連打）は同一の送信結果を共有する

@@ -159,7 +159,7 @@ void main() {
         expect(find.text('お父さん'), findsOneWidget);
         expect(find.text('お姉ちゃん'), findsOneWidget);
         expect(find.text('あなた'), findsOneWidget);
-        expect(find.textContaining('〇〇小学校'), findsAtLeastNWidgets(1));
+        expect(find.textContaining('大殿小学校'), findsAtLeastNWidgets(1));
 
         // 4. 安否タブ操作
         await tapCitizenBottomTab(tester, '安否');
@@ -173,18 +173,18 @@ void main() {
         // 5. マップタブで避難所確認
         await tapCitizenBottomTab(tester, 'マップ');
         expect(find.text('家族グループ'), findsNothing);
-        expect(find.textContaining('〇〇小学校'), findsAtLeastNWidgets(1));
+        expect(find.textContaining('大殿小学校'), findsAtLeastNWidgets(1));
 
         // 6. メッセージタブで連絡送信
         await tapCitizenBottomTab(tester, 'メッセージ');
         final msgField = find.byType(TextField);
         expect(msgField, findsAtLeastNWidgets(1));
-        await scrollAndEnterText(tester, msgField.first, '〇〇小学校へ避難します');
+        await scrollAndEnterText(tester, msgField.first, '大殿小学校へ避難します');
         final sendTrigger = findSendMessageTrigger();
         expect(sendTrigger, findsAtLeastNWidgets(1));
         await scrollAndTap(tester, sendTrigger.first, settle: false);
         await pumpPastToasts(tester);
-        expect(find.textContaining('〇〇小学校へ避難します'), findsAtLeastNWidgets(1));
+        expect(find.textContaining('大殿小学校へ避難します'), findsAtLeastNWidgets(1));
 
         // 7. ホームへ戻り同期確認後、自治体側へ切替して Drawer 操作確認
         await tapCitizenBottomTab(tester, 'ホーム');
@@ -219,7 +219,7 @@ void main() {
         await expectToastAndDrain(tester, 'デモ送信（Supabase未接続）');
 
         expect(find.textContaining('あなた'), findsAtLeastNWidgets(1));
-        expect(find.textContaining('〇〇地区付近'), findsOneWidget);
+        expect(find.textContaining('山口県山口市亀山町付近'), findsOneWidget);
         expect(find.textContaining('救助が必要です'), findsAtLeastNWidgets(1));
         await scrollAndTap(tester, find.text('ホームへ戻る'));
 

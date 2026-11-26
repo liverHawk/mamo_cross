@@ -213,7 +213,7 @@ class _CitizenRescueViewState extends State<CitizenRescueView> {
                           onChanged: (v) =>
                               widget.citizenStore.updateRescueDraft(location: v),
                           decoration: _inputDecoration(
-                            '例）山口県山口市亀山町2-1（未入力時は〇〇地区付近）',
+                            '例）山口県山口市亀山町2-1（未入力時は山口市亀山町付近）',
                           ),
                         ),
                         const SizedBox(height: 14),
