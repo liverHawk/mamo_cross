@@ -872,7 +872,7 @@ void main() {
       await openRescue(tester, dataSource: fakeDs);
 
       await enterFieldByHint(tester, '登録した名前', '高橋 一郎');
-      await enterFieldByHint(tester, '建物内に閉じ込め', '2階に閉じ込め');
+      await enterRescueDetail(tester, '2階に閉じ込め');
       await enterFieldByHint(tester, '登録済みの配慮事項', '喘息あり');
       await scrollAndTap(
         tester,
@@ -909,7 +909,7 @@ void main() {
         await enterFieldByHint(tester, '登録した名前', name);
       }
       if (detail != null) {
-        await enterFieldByHint(tester, '建物内に閉じ込め', detail);
+        await enterRescueDetail(tester, detail);
       }
       await scrollAndTap(
         tester,
@@ -1119,7 +1119,7 @@ void main() {
       await loginAsGuest(tester);
       await scrollAndTap(tester, find.text('救助要請'));
       await enterFieldByHint(tester, '登録した名前', name);
-      await enterFieldByHint(tester, '建物内に閉じ込め', detail);
+      await enterRescueDetail(tester, detail);
       if (considerations.isNotEmpty) {
         await enterFieldByHint(tester, '登録済みの配慮事項', considerations);
       }
@@ -1226,7 +1226,7 @@ void main() {
       await pumpPastToasts(tester);
 
       await scrollAndTap(tester, find.text('救助要請'));
-      await enterFieldByHint(tester, '建物内に閉じ込め', '玄関が歪み脱出困難');
+      await enterRescueDetail(tester, '玄関が歪み脱出困難');
       await scrollAndTap(
         tester,
         find.textContaining('救助要請を送信'),
