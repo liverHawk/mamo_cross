@@ -44,6 +44,9 @@ class RescueStore extends ChangeNotifier {
   final StreamController<RescueRequest> _incomingAlertController =
       StreamController<RescueRequest>.broadcast();
 
+  /// `applyRemoteUpdate` で座標が更新済みの `dbId` 集合（遅延 `insertRequest` の旧座標巻き戻り防止）
+  final Set<String> _remoteUpdatedCoordDbIds = <String>{};
+
   static RescueRequest dbRowToRequest(Map<String, dynamic> row) =>
       RescueRequest.fromSupabaseRow(row);
 
@@ -286,6 +289,9 @@ class RescueStore extends ChangeNotifier {
       existing.topPercent,
     );
     final nextCoords = RescueRequest.parseCoordinates(row);
+    if (nextCoords != null) {
+      _remoteUpdatedCoordDbIds.add(rawDbId);
+    }
 
     _requests[index] = existing.copyWith(
       status: nextStatus,
@@ -386,6 +392,7 @@ class RescueStore extends ChangeNotifier {
     }
     unawaited(_realtimeSubscription?.cancel());
     unawaited(_incomingAlertController.close());
+    _remoteUpdatedCoordDbIds.clear();
     super.dispose();
   }
 
@@ -501,7 +508,10 @@ class RescueStore extends ChangeNotifier {
       }
       return reconciled;
     }
-    if (parsedInsertedCoords != null &&
+    final dbId = current.dbId;
+    if (dbId != null &&
+        !_remoteUpdatedCoordDbIds.contains(dbId) &&
+        parsedInsertedCoords != null &&
         (current.latitude != parsedInsertedCoords.latitude ||
             current.longitude != parsedInsertedCoords.longitude)) {
       final updated = current.copyWith(
