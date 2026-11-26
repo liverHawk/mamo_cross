@@ -5,6 +5,7 @@ import 'package:mamo_cross/config/supabase_config.dart';
 import 'package:mamo_cross/main.dart';
 import 'package:mamo_cross/models/citizen_models.dart';
 import 'package:mamo_cross/models/rescue_request.dart';
+import 'package:mamo_cross/pages/citizen/citizen_shell_page.dart';
 import 'package:mamo_cross/services/auth_service.dart';
 import 'package:mamo_cross/services/citizen_data_source.dart';
 import 'package:mamo_cross/services/supabase_citizen_data_source.dart';
@@ -80,6 +81,8 @@ class _MockCitizenDataSource implements CitizenDataSource {
   Object? joinGroupError;
   Object? fetchSheltersError;
   Completer<void>? defaultGroupCompleter;
+  Completer<void>? fetchProfileCompleter;
+  Object? fetchProfileError;
 
   FamilyGroupInfo defaultGroup = const FamilyGroupInfo(
     id: 'group-1',
@@ -100,6 +103,12 @@ class _MockCitizenDataSource implements CitizenDataSource {
   @override
   Future<({CitizenRegistrationProfile profile, CitizenSafetyStatus safety})?>
       fetchProfile(String userId) async {
+    if (fetchProfileCompleter != null) {
+      await fetchProfileCompleter!.future;
+    }
+    if (fetchProfileError != null) {
+      throw fetchProfileError!;
+    }
     return storedProfile;
   }
 
@@ -942,5 +951,436 @@ void main() {
       // トーストタイマー消化
       await tester.pump(const Duration(seconds: 3));
     });
+  });
+
+  group('Challenge 1 regression tests (fetchProfile vs local profile edit races)', () {
+    test(
+      'Regression 1 (Probe 4A): saveProfileEdits during delayed fetchProfile preserves untouched DB fields, syncs UI, and updates openRescue draft',
+      () async {
+        final auth = _MockAuthService();
+        final ds = _MockCitizenDataSource();
+        ds.storedProfile = (
+          profile: CitizenRegistrationProfile(
+            name: 'DB旧ユーザー',
+            birthDate: '1985-04-01',
+            bloodType: 'B型',
+            gender: '男性',
+            postalCode: '753-0001',
+            prefecture: '山口県',
+            addressDetail: '山口市旧1-1',
+            considerations: Set<String>.unmodifiable(
+              const <String>{'🩺 医療的ケアが必要'},
+            ),
+            otherConsideration: '持病あり',
+          ),
+          safety: CitizenSafetyStatus.safe,
+        );
+        ds.fetchProfileCompleter = Completer<void>();
+
+        final store = CitizenStore(
+          dataSource: ds,
+          authService: auth,
+          autoInitialize: false,
+        );
+        addTearDown(store.dispose);
+
+        store.demoLogin(delay: Duration.zero);
+        final saveFuture = store.saveProfileEdits(
+          name: '最新 太郎',
+          addressDetail: '山口県山口市新規2-2',
+        );
+        await pumpEventQueue();
+        ds.fetchProfileCompleter!.complete();
+        expect(await saveFuture, isTrue);
+
+        expect(ds.storedProfile?.profile.name, '最新 太郎');
+        expect(store.profile.name, '最新 太郎');
+        expect(
+          ds.storedProfile?.profile.addressDetail,
+          '山口県山口市新規2-2',
+        );
+        expect(store.profile.addressDetail, '山口県山口市新規2-2');
+        expect(ds.storedProfile?.profile.birthDate, '1985-04-01');
+        expect(ds.storedProfile?.profile.bloodType, 'B型');
+        expect(ds.storedProfile?.profile.gender, '男性');
+        expect(
+          ds.storedProfile?.profile.considerations,
+          const <String>{'🩺 医療的ケアが必要'},
+        );
+        expect(ds.storedProfile?.profile.otherConsideration, '持病あり');
+
+        store.openRescue();
+        expect(store.rescueNameDraft, '最新 太郎');
+        expect(store.rescueCareDraft, '🩺 医療的ケアが必要、持病あり');
+      },
+    );
+
+    test(
+      'Regression 2 (Probe 4A rollback): failed saveProfileEdits after delayed fetchProfile rolls back to fetched DB profile',
+      () async {
+        final auth = _MockAuthService();
+        final ds = _MockCitizenDataSource();
+        ds.storedProfile = (
+          profile: const CitizenRegistrationProfile(
+            name: 'DB旧ユーザー',
+            birthDate: '1985-04-01',
+            bloodType: 'B型',
+          ),
+          safety: CitizenSafetyStatus.safe,
+        );
+        ds.fetchProfileCompleter = Completer<void>();
+        ds.upsertProfileError = StateError('save failed');
+
+        final store = CitizenStore(
+          dataSource: ds,
+          authService: auth,
+          autoInitialize: false,
+        );
+        addTearDown(store.dispose);
+
+        store.demoLogin(delay: Duration.zero);
+        final saveFuture = store.saveProfileEdits(name: '失敗名');
+        await pumpEventQueue();
+        ds.fetchProfileCompleter!.complete();
+
+        expect(await saveFuture, isFalse);
+        expect(store.profile.name, 'DB旧ユーザー');
+        expect(store.profile.birthDate, '1985-04-01');
+        expect(store.toastMessage, '登録情報の保存に失敗しました');
+      },
+    );
+
+    test(
+      'Regression 3 (Probe 4B): updateBasicInfo, toggleConsideration, updateOtherConsideration, and completeRegistration survive delayed fetchProfile',
+      () async {
+        // Case A: 編集中のローカル項目を保持しつつ未編集項目を DB 値で補完
+        final auth = _MockAuthService();
+        final ds = _MockCitizenDataSource();
+        ds.storedProfile = (
+          profile: CitizenRegistrationProfile(
+            name: '旧サーバー名',
+            birthDate: '1980-01-01',
+            bloodType: 'A型',
+            considerations: Set<String>.unmodifiable(
+              <String>{kCitizenConsiderationOptions[4]},
+            ),
+            otherConsideration: '旧メモ',
+          ),
+          safety: CitizenSafetyStatus.safe,
+        );
+        ds.fetchProfileCompleter = Completer<void>();
+
+        final store = CitizenStore(
+          dataSource: ds,
+          authService: auth,
+          autoInitialize: false,
+        );
+        addTearDown(store.dispose);
+
+        store.demoLogin(delay: Duration.zero);
+        store.updateBasicInfo(name: '新ユーザー', bloodType: 'O型');
+        store.toggleConsideration(kCitizenConsiderationOptions[2]);
+        store.updateOtherConsideration('新規配慮');
+        ds.fetchProfileCompleter!.complete();
+        await pumpEventQueue(times: 20);
+
+        expect(store.profile.name, '新ユーザー');
+        expect(store.profile.bloodType, 'O型');
+        expect(
+          store.profile.considerations,
+          <String>{kCitizenConsiderationOptions[2]},
+        );
+        expect(store.profile.otherConsideration, '新規配慮');
+        expect(store.profile.birthDate, '1980-01-01');
+
+        // Case B: fetchProfile 完了前に completeRegistration を実行しても旧値で上書きされない
+        final auth2 = _MockAuthService();
+        final ds2 = _MockCitizenDataSource();
+        ds2.storedProfile = ds.storedProfile;
+        ds2.fetchProfileCompleter = Completer<void>();
+
+        final store2 = CitizenStore(
+          dataSource: ds2,
+          authService: auth2,
+          autoInitialize: false,
+        );
+        addTearDown(store2.dispose);
+
+        store2.demoLogin(delay: Duration.zero);
+        store2.updateBasicInfo(name: '登録完了太郎', bloodType: 'AB型');
+        store2.completeRegistration();
+        ds2.fetchProfileCompleter!.complete();
+        await pumpEventQueue(times: 20);
+
+        expect(ds2.storedProfile?.profile.name, '登録完了太郎');
+        expect(ds2.storedProfile?.profile.bloodType, 'AB型');
+        expect(store2.profile.name, '登録完了太郎');
+      },
+    );
+
+    test(
+      'Regression 4: handles null/error fetchProfile before saveProfileEdits and aborts cleanly on resetDemo',
+      () async {
+        // 1) storedProfile == null
+        final auth1 = _MockAuthService();
+        final ds1 = _MockCitizenDataSource();
+        ds1.fetchProfileCompleter = Completer<void>();
+        final store1 = CitizenStore(
+          dataSource: ds1,
+          authService: auth1,
+          autoInitialize: false,
+        );
+        addTearDown(store1.dispose);
+
+        store1.demoLogin(delay: Duration.zero);
+        final f1 = store1.saveProfileEdits(name: '新規太郎');
+        await pumpEventQueue();
+        ds1.fetchProfileCompleter!.complete();
+        expect(await f1, isTrue);
+        expect(ds1.storedProfile?.profile.name, '新規太郎');
+        expect(store1.profile.name, '新規太郎');
+
+        // 2) fetchProfile throws error
+        final auth2 = _MockAuthService();
+        final ds2 = _MockCitizenDataSource();
+        ds2.fetchProfileCompleter = Completer<void>();
+        ds2.fetchProfileError = StateError('network');
+        final store2 = CitizenStore(
+          dataSource: ds2,
+          authService: auth2,
+          autoInitialize: false,
+        );
+        addTearDown(store2.dispose);
+
+        store2.demoLogin(delay: Duration.zero);
+        final f2 = store2.saveProfileEdits(name: '復旧太郎');
+        await pumpEventQueue();
+        ds2.fetchProfileCompleter!.complete();
+        expect(await f2, isTrue);
+        expect(ds2.storedProfile?.profile.name, '復旧太郎');
+        expect(store2.profile.name, '復旧太郎');
+
+        // 3) immediate resetDemo cancels in-flight saveProfileEdits via _authRevision
+        final auth3 = _MockAuthService();
+        final ds3 = _MockCitizenDataSource();
+        ds3.fetchProfileCompleter = Completer<void>();
+        final store3 = CitizenStore(
+          dataSource: ds3,
+          authService: auth3,
+          autoInitialize: false,
+        );
+        addTearDown(store3.dispose);
+
+        store3.demoLogin(delay: Duration.zero);
+        final f3 = store3.saveProfileEdits(name: '破棄予定');
+        store3.resetDemo();
+        ds3.fetchProfileCompleter!.complete();
+        expect(await f3, isFalse);
+        expect(store3.isLoggedIn, isFalse);
+        expect(store3.registeredName, 'あなた');
+        expect(ds3.storedProfile?.profile.name, isNot('破棄予定'));
+      },
+    );
+
+    testWidgets(
+      'Regression 5 (UI flow): CitizenSettingsTab partial edit during delayed fetchProfile preserves address and birthDate through CitizenRescueView',
+      (tester) async {
+        final auth = _MockAuthService();
+        final ds = _MockCitizenDataSource();
+        ds.storedProfile = (
+          profile: const CitizenRegistrationProfile(
+            name: 'DB旧ユーザー',
+            birthDate: '1985-04-01',
+            addressDetail: '山口市旧住所',
+          ),
+          safety: CitizenSafetyStatus.safe,
+        );
+        ds.fetchProfileCompleter = Completer<void>();
+
+        final store = CitizenStore(
+          dataSource: ds,
+          authService: auth,
+          autoInitialize: false,
+        );
+        final rescueStore = RescueStore(startClock: false);
+        addTearDown(() async {
+          store.dispose();
+          rescueStore.dispose();
+          await tester.pump(const Duration(seconds: 3));
+        });
+
+        await tester.pumpWidget(
+          MaterialApp(
+            home: CitizenShellPage(
+              citizenStore: store,
+              rescueStore: rescueStore,
+            ),
+          ),
+        );
+
+        store.demoLogin(delay: Duration.zero);
+        await tester.pump();
+
+        await tester.tap(find.text('設定'));
+        await tester.pump();
+        await tester.tap(find.text('編集'));
+        await tester.pump();
+
+        // お名前のみ編集（住所欄は未変更のまま）
+        final fields = find.byType(TextField);
+        expect(fields, findsNWidgets(2));
+        await tester.enterText(fields.at(0), '最新 太郎');
+        await tester.pump();
+        await tester.tap(find.text('保存'));
+        await tester.pump();
+
+        ds.fetchProfileCompleter!.complete();
+        await tester.runAsync(
+          () => Future<void>.delayed(const Duration(milliseconds: 20)),
+        );
+        await tester.pump();
+
+        expect(find.text('最新 太郎'), findsOneWidget);
+        expect(find.text('山口市旧住所'), findsOneWidget);
+        expect(find.text('1985-04-01'), findsOneWidget);
+        expect(ds.storedProfile?.profile.name, '最新 太郎');
+        expect(ds.storedProfile?.profile.addressDetail, '山口市旧住所');
+        expect(ds.storedProfile?.profile.birthDate, '1985-04-01');
+
+        // ホーム -> 救助要請画面でも最新名が引き継がれること
+        await tester.tap(find.text('ホーム'));
+        await tester.pump();
+        await tester.tap(find.text('救助要請'));
+        await tester.pump();
+
+        final rescueNameField = tester.widget<TextField>(
+          find.byType(TextField).first,
+        );
+        expect(rescueNameField.controller?.text, '最新 太郎');
+
+        await tester.pump(const Duration(seconds: 3));
+      },
+    );
+
+    testWidgets(
+      'Regression 6 (UI sync): CitizenReg2View and CitizenReg3View sync untouched TextFields when delayed fetchProfile completes',
+      (tester) async {
+        final auth = _MockAuthService();
+        final ds = _MockCitizenDataSource();
+        ds.storedProfile = (
+          profile: CitizenRegistrationProfile(
+            name: 'DB太郎',
+            birthDate: '1985-04-01',
+            bloodType: 'B型',
+            gender: '男性',
+            postalCode: '753-0001',
+            prefecture: '山口県',
+            addressDetail: '山口市1-2-3',
+            considerations: Set<String>.unmodifiable(
+              <String>{kCitizenConsiderationOptions[1]},
+            ),
+            otherConsideration: '喘息あり',
+          ),
+          safety: CitizenSafetyStatus.safe,
+        );
+        ds.fetchProfileCompleter = Completer<void>();
+
+        final store = CitizenStore(
+          dataSource: ds,
+          authService: auth,
+          autoInitialize: false,
+        );
+        final rescueStore = RescueStore(startClock: false);
+        addTearDown(() async {
+          store.dispose();
+          rescueStore.dispose();
+          await tester.pump(const Duration(seconds: 3));
+        });
+
+        await tester.pumpWidget(
+          MaterialApp(
+            home: CitizenShellPage(
+              citizenStore: store,
+              rescueStore: rescueStore,
+            ),
+          ),
+        );
+
+        store.demoLogin(delay: Duration.zero);
+        store.goToScreen(CitizenScreen.reg2);
+        await tester.pump();
+
+        // reg2 で名前のみローカル入力した状態で fetchProfile が後着完了する
+        final reg2Fields = find.byType(TextField);
+        expect(reg2Fields, findsNWidgets(4));
+        await tester.enterText(reg2Fields.at(0), '入力中ユーザー');
+        await tester.pump();
+
+        ds.fetchProfileCompleter!.complete();
+        await tester.runAsync(
+          () => Future<void>.delayed(const Duration(milliseconds: 20)),
+        );
+        await tester.pump();
+
+        // 入力中の名前は維持され、未編集の TextField と Dropdown/Radio が DB 値へ追従する
+        expect(
+          tester.widget<TextField>(reg2Fields.at(0)).controller?.text,
+          '入力中ユーザー',
+        );
+        expect(
+          tester.widget<TextField>(reg2Fields.at(1)).controller?.text,
+          '1985-04-01',
+        );
+        expect(
+          tester.widget<TextField>(reg2Fields.at(2)).controller?.text,
+          '753-0001',
+        );
+        expect(
+          tester.widget<TextField>(reg2Fields.at(3)).controller?.text,
+          '山口市1-2-3',
+        );
+        expect(find.text('B型'), findsOneWidget);
+        expect(find.text('山口県'), findsOneWidget);
+
+        // #reg3 を表示した状態で外部同期（fetchProfile 相当）が後着しても未編集のその他欄が追従する
+        final ds3 = _MockCitizenDataSource();
+        ds3.storedProfile = ds.storedProfile;
+        ds3.fetchProfileCompleter = Completer<void>();
+        final auth3 = _MockAuthService();
+        final store3 = CitizenStore(
+          dataSource: ds3,
+          authService: auth3,
+          autoInitialize: false,
+        );
+        addTearDown(store3.dispose);
+
+        await tester.pumpWidget(
+          MaterialApp(
+            home: CitizenShellPage(
+              citizenStore: store3,
+              rescueStore: rescueStore,
+            ),
+          ),
+        );
+
+        store3.demoLogin(delay: Duration.zero);
+        store3.goToScreen(CitizenScreen.reg3);
+        await tester.pump();
+
+        ds3.fetchProfileCompleter!.complete();
+        await tester.runAsync(
+          () => Future<void>.delayed(const Duration(milliseconds: 20)),
+        );
+        await tester.pump();
+
+        final reg3OtherField = tester.widget<TextField>(find.byType(TextField));
+        expect(reg3OtherField.controller?.text, '喘息あり');
+        expect(store3.profile.considerations, <String>{
+          kCitizenConsiderationOptions[1],
+        });
+
+        await tester.pump(const Duration(seconds: 3));
+      },
+    );
   });
 }
