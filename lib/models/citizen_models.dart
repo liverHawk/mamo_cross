@@ -196,6 +196,20 @@ class CitizenRegistrationProfile {
     return parts.join(' ');
   }
 
+  /// 郵便番号を除いた住所（ジオコーディング・救助要請位置表示用）
+  String get addressLine {
+    final parts = <String>[];
+    final pref = prefecture.trim();
+    if (pref.isNotEmpty && pref != '都道府県を選択') {
+      parts.add(pref);
+    }
+    final detail = addressDetail.trim();
+    if (detail.isNotEmpty) {
+      parts.add(detail);
+    }
+    return parts.join();
+  }
+
   CitizenRegistrationProfile copyWith({
     bool? photoSelected,
     bool? idDocSelected,
@@ -699,8 +713,9 @@ class RescueSummary {
   }
 }
 
-/// `mamo-main/supabase_setup.sql` 準拠の厳密な 15 カラム INSERT ペイロードを生成する。
+/// `mamo-main/supabase_setup.sql` 準拠の 15 カラム INSERT ペイロードを生成する。
 ///
+/// `latitude` / `longitude` が指定された場合のみ座標カラムを追加する。
 /// `age`, `gender`, `latPercent`, `topPercent`, `id` は含めない。
 Map<String, dynamic> buildCitizenRescuePayload({
   required String requestId,
@@ -712,6 +727,8 @@ Map<String, dynamic> buildCitizenRescuePayload({
   String distanceText = '約150m先（デモ）',
   String requestType = '救助要請',
   String status = '未対応',
+  double? latitude,
+  double? longitude,
 }) {
   final safeName =
       requesterName.trim().isEmpty ? 'あなた' : requesterName.trim();
@@ -724,7 +741,7 @@ Map<String, dynamic> buildCitizenRescuePayload({
   final safeDistance =
       distanceText.trim().isEmpty ? '約150m先（デモ）' : distanceText.trim();
 
-  return <String, dynamic>{
+  final payload = <String, dynamic>{
     'request_id': requestId,
     'created_at': createdAt.toUtc().toIso8601String(),
     'user_name': safeName,
@@ -741,4 +758,12 @@ Map<String, dynamic> buildCitizenRescuePayload({
     'distance_text': safeDistance,
     'status': status,
   };
+  if (latitude != null &&
+      longitude != null &&
+      latitude.isFinite &&
+      longitude.isFinite) {
+    payload['latitude'] = latitude;
+    payload['longitude'] = longitude;
+  }
+  return payload;
 }
